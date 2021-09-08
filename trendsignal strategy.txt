@@ -1,0 +1,86 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+strategy("trendsignal strategy", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=50)
+
+//---INPUT---
+
+RISK = input(3, title="RISK", type=input.integer)
+Alert_Delay_In_Seconds = input(0, title="Alert_Delay_In_Seconds", type=input.integer)
+alertsOn = input(false, title="Включить оповещения?", type=input.bool)
+
+//---INPUT END---
+
+bool isBuy = na
+
+int SSP = 9
+var int PrevAlertTime = 0
+var float alertBar = 0
+
+var int K = na
+float Range = 0
+float AvgRange = 0
+var float smin = na
+var float smax = na
+var float SsMax = na
+var float SsMin = na
+var float price = na
+var bool uptrend = na
+var bool old = false
+
+int limit = 1 + SSP
+
+K := 33 - RISK
+for shift = limit to 0
+    for i = shift to (shift + SSP)
+        AvgRange += high[i] - low[i]
+        
+    Range := AvgRange / (SSP + 1)
+    
+    SsMax := high[shift]
+    SsMin := low[shift]
+    for i = shift to (shift + SSP - 1)
+        price := high[i]
+        if SsMax < price
+            SsMax := price
+        price := low[i]
+        if SsMin > price
+            SsMin := price
+            
+    smin := SsMin + (SsMax - SsMin)*K/100
+    smax := SsMax - (SsMax - SsMin)*K/100
+    
+    if close[shift] < smin
+        uptrend := false
+    
+    if close[shift] > smax
+        uptrend := true
+    
+    if uptrend != old and uptrend == true
+        
+        if bar_index > alertBar and shift == 0
+            isBuy := true
+            alertBar := bar_index
+            PrevAlertTime := time
+    
+    if uptrend != old and uptrend == false and (time - PrevAlertTime > 1 * Alert_Delay_In_Seconds)
+        
+        if bar_index > alertBar and shift == 0  and (time - PrevAlertTime > 1 * Alert_Delay_In_Seconds)
+            isBuy := false
+            alertBar := bar_index
+            PrevAlertTime := time
+    
+    old := uptrend
+
+plotshape(isBuy == true, title="Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(isBuy == false, title="Sell", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+//---trendsignal END---
+
+if isBuy == true
+    strategy.entry("long", strategy.long)
+    alert("BUY", alert.freq_once_per_bar)
+if isBuy == false
+    strategy.entry("short", strategy.short)
+    alert("SELL", alert.freq_once_per_bar)

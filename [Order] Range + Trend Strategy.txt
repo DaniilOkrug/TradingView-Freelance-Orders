@@ -1,0 +1,134 @@
+//@version=4
+strategy("[Order] Range + Trend Strategy", shorttitle='RTI', overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=15)
+
+//---INPUT-----------------------------------------------------------
+
+src = input(defval=close, title="Source")
+samplingPeriod = input(defval=100, minval=1, title="Sampling Period")
+rangeMultiplier = input(defval=4.0, minval=0.1, title="Range Multiplier")
+takeProfitPercent = input(1.5, title='Take Profit %(0-100)', type=input.float, step=0.1) / 100
+
+leftbars = input(100, minval=1, title='Pivot Detection: Left Bars')
+rightbars = input(15, minval=1, title='Pivot Detection: Right Bars')
+showTrend = input(true, title='Show Trend Lines')
+showPivotsConnection = input(true, title='Show Pivot Connections')
+
+//---Determine trend lines--------------------------------------------
+
+var float takeProfit = 0.0
+var bool tookProfit = false
+
+pivotHigh = pivothigh(high, leftbars, rightbars)
+pivotLow = pivotlow(low, leftbars, rightbars)
+
+pivotHighValue1 = valuewhen(pivotHigh, high[rightbars], 0)
+pivotHighBar1 = valuewhen(pivotHigh, bar_index[rightbars], 0)
+pivotHighValue2 = valuewhen(pivotHigh, high[rightbars], 1)
+pivotHighBar2 = valuewhen(pivotHigh, bar_index[rightbars], 1)
+
+pivotLowValue1 = valuewhen(pivotLow, low[rightbars], 0)
+pivotLowBar1 = valuewhen(pivotLow, bar_index[rightbars], 0)
+pivotLowValue2 = valuewhen(pivotLow, low[rightbars], 1)
+pivotLowBar2 = valuewhen(pivotLow, bar_index[rightbars], 1)
+    
+plotshape(pivotHigh, style = shape.circle, location = location.abovebar, color = color.orange,  title = 'Pivot High', offset = -rightbars)
+plotshape(pivotLow, style = shape.circle,   location = location.belowbar, color = color.blue, title = 'Pivot Low',  offset = -rightbars)
+
+plot(pivotHigh and showPivotsConnection ? high[rightbars] : na, color=color.orange, offset=-rightbars)
+plot(pivotLow and showPivotsConnection ? low[rightbars] : na, color=color.purple, offset=-rightbars)
+
+get_slope(x1,x2,y1,y2)=>
+    m = (y2-y1)/(x2-x1)
+ 
+get_interceptY(m, x1, y1)=>
+    b=y1-m*x1
+
+get_y(m, b, ts)=>
+    Y = m * ts + b
+
+int   resistance_x1 = na, int   support_x1 = na
+float resistance_y1 = na, float support_y1 = na
+int   resistance_x2 = na, int   support_x2 = na
+float resistance_y2 = na, float support_y2 = na
+
+resistance_x1 := pivotHigh ? pivotHighBar1 : resistance_x1[1]
+resistance_y1 := pivotHigh ? pivotHighValue1 : resistance_y1[1]
+resistance_x2 := pivotHigh ? pivotHighBar2 : resistance_x2[1]
+resistance_y2 := pivotHigh ? pivotHighValue2 : resistance_y2[1]
+
+resistance_m = get_slope(resistance_x1, resistance_x2, resistance_y1, resistance_y2)
+resistance_b = get_interceptY(resistance_m, resistance_x1, resistance_y1)
+resistance_y = get_y(resistance_m, resistance_b, bar_index)
+
+support_x1 := pivotLow ? pivotLowBar1 : support_x1[1]
+support_y1 := pivotLow ? pivotLowValue1 : support_y1[1]
+support_x2 := pivotLow ? pivotLowBar2 : support_x2[1]
+support_y2 := pivotLow ? pivotLowValue2 : support_y2[1]
+
+support_m = get_slope(support_x1, support_x2, support_y1, support_y2)
+support_b = get_interceptY(support_m, support_x1, support_y1)
+support_y = get_y(support_m, support_b, bar_index)
+
+plot(showTrend ? resistance_y : na, color=color.red, title='Resistance line', linewidth=1, style=plot.style_circles, display = display.all)
+plot(showTrend ? support_y : na, color=color.lime, title='Support line', linewidth=1, style=plot.style_circles, display = display.all)
+
+if pivotHigh
+    line.new(showPivotsConnection ? pivotHighBar1 : na, pivotHighValue1, bar_index, resistance_y, style = line.style_dashed, color = color.blue)
+if pivotLow
+    line.new(showPivotsConnection ? pivotLowBar1 : na, pivotLowValue1, bar_index, support_y, style = line.style_dashed, color = color.blue)
+    
+//---Determine range--------------------------------------------------
+
+smoothRange = ema(ema(abs(src - src[1]), samplingPeriod), (samplingPeriod*2) - 1) * rangeMultiplier 
+
+rangeFilter(x, r)=>
+    rangeFilter  = x
+    rangeFilter := x > nz(rangeFilter[1]) ? ((x - r) < nz(rangeFilter[1]) ? nz(rangeFilter[1]) : (x - r)) : ((x + r) > nz(rangeFilter[1]) ? nz(rangeFilter[1]) : (x + r))
+    rangeFilter
+filter = rangeFilter(src, smoothRange)
+
+up = 0.0
+up := filter > filter[1] ? nz(up[1]) + 1 : filter < filter[1] ? 0 : nz(up[1])
+down = 0.0
+down := filter < filter[1] ? nz(down[1]) + 1 : filter > filter[1] ? 0 : nz(down[1])
+
+longCond = src > filter and  up > 0 and src != src[1]
+shortCond = src < filter and down > 0 and src != src[1]
+
+conds = 0
+conds := longCond ? 1 : shortCond ? -1 : conds[1]
+longCondition = longCond and conds[1] == -1
+shortCondition = shortCond and conds[1] == 1
+
+plotshape(longCondition, title = "Buy Signal", text ="L", textcolor = color.black, style=shape.triangleup, size = size.small, location=location.belowbar, color = color.green)
+plotshape(shortCondition, title = "Sell Signal", text ="S", textcolor = color.black, style=shape.triangledown, size = size.small, location=location.abovebar, color = color.red)
+
+[supertrend, marketSide] = supertrend(20, 7) // [супертренд линия, напрвление рынка]
+
+if longCondition and close > supertrend
+    strategy.entry("LONG", strategy.long, alert_message="🟢 LONG")
+    
+if shortCondition and close < supertrend
+    strategy.entry("SHORT", strategy.short, alert_message="🔴 SHORT")
+filtplot = plot(filter, color=up > 0 ? color.green : down > 0 ? color.red : color.orange, linewidth=3, title="Range Filter")
+
+//---Determine signals------------------------------------------------
+
+if takeProfitPercent != 0
+    if longCondition
+        tookProfit := false
+        takeProfit := close + close * takeProfitPercent
+
+    if shortCondition
+        tookProfit := false
+        takeProfit := close - close * takeProfitPercent
+        
+takeProfitLongCondition = close > takeProfit and not tookProfit and longCond and takeProfitPercent != 0
+takeProfitShortCondition = close < takeProfit and not tookProfit and shortCond and takeProfitPercent != 0
+
+if takeProfitLongCondition or takeProfitShortCondition
+    tookProfit := true
+    strategy.close_all(alert_message="TAKEPROFIT")
+
+plotshape(takeProfitLongCondition, title = "TakeLongProfit", style = shape.circle, size = size.small, location = location.abovebar, color = color.yellow)
+plotshape(takeProfitShortCondition, title = "TakeShortProfit", style = shape.circle, size = size.small, location = location.belowbar, color = color.yellow)

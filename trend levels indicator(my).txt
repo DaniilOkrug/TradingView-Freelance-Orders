@@ -1,0 +1,70 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+study("trend levels indicator(my)", overlay=true)
+
+leftbars = input(100, minval=1, title='Pivot Detection: Left Bars')
+rightbars = input(15, minval=1, title='Pivot Detection: Right Bars')
+showTrend = input(true, title='Show Trend Lines')
+showPivotsConnection = input(true, title='Show Pivot Connections')
+
+
+pivotHigh = pivothigh(high, leftbars, rightbars)
+pivotLow = pivotlow(low, leftbars, rightbars)
+
+pivotHighValue1 = valuewhen(pivotHigh, high[rightbars], 0)
+pivotHighBar1 = valuewhen(pivotHigh, bar_index[rightbars], 0)
+pivotHighValue2 = valuewhen(pivotHigh, high[rightbars], 1)
+pivotHighBar2 = valuewhen(pivotHigh, bar_index[rightbars], 1)
+
+pivotLowValue1 = valuewhen(pivotLow, low[rightbars], 0)
+pivotLowBar1 = valuewhen(pivotLow, bar_index[rightbars], 0)
+pivotLowValue2 = valuewhen(pivotLow, low[rightbars], 1)
+pivotLowBar2 = valuewhen(pivotLow, bar_index[rightbars], 1)
+    
+plotshape(pivotHigh, style = shape.circle, location = location.abovebar, color = color.green,  title = 'Pivot High', offset = -rightbars)
+plotshape(pivotLow, style = shape.circle,   location = location.belowbar, color = color.blue, title = 'Pivot Low',  offset = -rightbars)
+
+plot(pivotHigh and showPivotsConnection ? high[rightbars] : na, color=color.green, offset=-rightbars)
+plot(pivotLow and showPivotsConnection ? low[rightbars] : na, color=color.red, offset=-rightbars)
+
+get_slope(x1,x2,y1,y2)=>
+    m = (y2-y1)/(x2-x1)
+ 
+get_interceptY(m, x1, y1)=>
+    b=y1-m*x1
+
+get_y(m, b, ts)=>
+    Y = m * ts + b
+
+int   resistance_x1 = na, int   support_x1 = na
+float resistance_y1 = na, float support_y1 = na
+int   resistance_x2 = na, int   support_x2 = na
+float resistance_y2 = na, float support_y2 = na
+
+resistance_x1 := pivotHigh ? pivotHighBar1 : resistance_x1[1]
+resistance_y1 := pivotHigh ? pivotHighValue1 : resistance_y1[1]
+resistance_x2 := pivotHigh ? pivotHighBar2 : resistance_x2[1]
+resistance_y2 := pivotHigh ? pivotHighValue2 : resistance_y2[1]
+
+resistance_m = get_slope(resistance_x1, resistance_x2, resistance_y1, resistance_y2)
+resistance_b = get_interceptY(resistance_m, resistance_x1, resistance_y1)
+resistance_y = get_y(resistance_m, resistance_b, bar_index)
+
+support_x1 := pivotLow ? pivotLowBar1 : support_x1[1]
+support_y1 := pivotLow ? pivotLowValue1 : support_y1[1]
+support_x2 := pivotLow ? pivotLowBar2 : support_x2[1]
+support_y2 := pivotLow ? pivotLowValue2 : support_y2[1]
+
+support_m = get_slope(support_x1, support_x2, support_y1, support_y2)
+support_b = get_interceptY(support_m, support_x1, support_y1)
+support_y = get_y(support_m, support_b, bar_index)
+
+plot(showTrend ? resistance_y : na, color=color.lime, title='Resistance line', linewidth=1, style=plot.style_circles, display = display.all)
+plot(showTrend ? support_y : na, color=color.red, title='Support line', linewidth=1, style=plot.style_circles, display = display.all)
+
+if pivotHigh
+    line.new(showPivotsConnection ? pivotHighBar1 : na, pivotHighValue1, bar_index, resistance_y, style = line.style_dashed, color = color.blue)
+if pivotLow
+    line.new(showPivotsConnection ? pivotLowBar1 : na, pivotLowValue1, bar_index, support_y, style = line.style_dashed, color = color.blue)

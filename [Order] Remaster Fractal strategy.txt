@@ -1,0 +1,305 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+strategy("[Order] Fractals strategy remaster", overlay=true)
+
+// ---INPUTS--- //
+
+n = input(title="Период крупных фракталов", defval=2, minval=2, type=input.integer, group="Настройки фракталов")
+n_additional = input(title="Период меньших фракталов", defval=2, minval=2, type=input.integer, group="Настройки фракталов")
+
+upFractalType = input(title="Тип верхнего фрактала", defval="high", options=["high", "close"], group="Фракталы после пробития")
+downFractalType = input(title="Тип нижнего фрактала", defval="low", options=["low", "close"], group="Фракталы после пробития")
+
+numberFs = input(title="Количество отслеживаемых фракталов назад", defval=1, minval=1, type=input.integer, group="Основные уровни")
+levelRetestPercent = input(title="Процент дистанции ретеста(%)", defval=30, type=input.float, step=0.1, group="Основные уровни")/100
+
+afterBeaking_bottomRangePercent = input(title="Верхний уровень после пробития(%)", defval=15, type=input.float, group="После пробития основного уровня")/100
+afterBeaking_topRangePercent = input(title="Нижний уровень после пробития(%)", defval=15, type=input.float, group="После пробития основного уровня")/100
+
+showMainFractals = input(title="Показать крупные фракталы", defval=true, type=input.bool, group="Визуальная часть")
+showAdditionalFractals = input(title="Показать меньшие фракталы", defval=false, type=input.bool, group="Визуальная часть")
+// showMainLevelsBreaking = input(title="Показать пробитие", defval=true, type=input.bool, group="Визуальная часть")
+showRangeAfterBreaking = input(title="Показать линии дипозона фракталов после пробития", defval=true, type=input.bool, group="Визуальная часть")
+showRetestLine = input(title="Показать уровень для ретеста", defval=true, type=input.bool, group="Визуальная часть")
+showRetestSignal = input(title="Показать сигнал ретеста", defval=true, type=input.bool, group="Визуальная часть")
+
+showRetestAlert = input(title="Ретест", defval=true, type=input.bool, group="Alerts")
+
+// ---INPUTS END--- //
+
+// Фракталы крупного таймфрейма
+// UpFractal
+bool upflagDownFrontier = true
+bool upflagUpFrontier0 = true
+bool upflagUpFrontier1 = true
+bool upflagUpFrontier2 = true
+bool upflagUpFrontier3 = true
+bool upflagUpFrontier4 = true
+
+for i = 1 to n
+    upflagDownFrontier := upflagDownFrontier and (high[n-i] < high[n])
+    upflagUpFrontier0 := upflagUpFrontier0 and (high[n+i] < high[n])
+    upflagUpFrontier1 := upflagUpFrontier1 and (high[n+1] <= high[n] and high[n+i + 1] < high[n])
+    upflagUpFrontier2 := upflagUpFrontier2 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+i + 2] < high[n])
+    upflagUpFrontier3 := upflagUpFrontier3 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+3] <= high[n] and high[n+i + 3] < high[n])
+    upflagUpFrontier4 := upflagUpFrontier4 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+3] <= high[n] and high[n+4] <= high[n] and high[n+i + 4] < high[n])
+flagUpFrontier = upflagUpFrontier0 or upflagUpFrontier1 or upflagUpFrontier2 or upflagUpFrontier3 or upflagUpFrontier4
+
+upFractal = (upflagDownFrontier and flagUpFrontier)
+
+
+// downFractal
+bool downflagDownFrontier = true
+bool downflagUpFrontier0 = true
+bool downflagUpFrontier1 = true
+bool downflagUpFrontier2 = true
+bool downflagUpFrontier3 = true
+bool downflagUpFrontier4 = true
+
+for i = 1 to n
+    downflagDownFrontier := downflagDownFrontier and (low[n-i] > low[n])
+    downflagUpFrontier0 := downflagUpFrontier0 and (low[n+i] > low[n])
+    downflagUpFrontier1 := downflagUpFrontier1 and (low[n+1] >= low[n] and low[n+i + 1] > low[n])
+    downflagUpFrontier2 := downflagUpFrontier2 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+i + 2] > low[n])
+    downflagUpFrontier3 := downflagUpFrontier3 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+3] >= low[n] and low[n+i + 3] > low[n])
+    downflagUpFrontier4 := downflagUpFrontier4 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+3] >= low[n] and low[n+4] >= low[n] and low[n+i + 4] > low[n])
+flagDownFrontier = downflagUpFrontier0 or downflagUpFrontier1 or downflagUpFrontier2 or downflagUpFrontier3 or downflagUpFrontier4
+
+downFractal = (downflagDownFrontier and flagDownFrontier)
+
+
+plotshape(upFractal and showMainFractals, style=shape.triangleup,   location=location.abovebar, offset=-n, color=color.green, size = size.small)
+plotshape(downFractal and showMainFractals, style=shape.triangledown,   location=location.belowbar, offset=-n, color=color.red, size = size.small)
+
+//Fractals end
+
+// Фрактала меньшег таймрейма
+
+// UpFractal
+bool upflagDownFrontier_additional = true
+bool upflagUpFrontier0_additional = true
+bool upflagUpFrontier1_additional = true
+bool upflagUpFrontier2_additional = true
+bool upflagUpFrontier3_additional = true
+bool upflagUpFrontier4_additional = true
+
+for i = 1 to n_additional
+    upflagDownFrontier_additional := upflagDownFrontier_additional and (high[n_additional-i] < high[n_additional])
+    upflagUpFrontier0_additional := upflagUpFrontier0_additional and (high[n_additional+i] < high[n_additional])
+    upflagUpFrontier1_additional := upflagUpFrontier1_additional and (high[n_additional+1] <= high[n_additional] and high[n_additional+i + 1] < high[n_additional])
+    upflagUpFrontier2_additional := upflagUpFrontier2_additional and (high[n_additional+1] <= high[n_additional] and high[n_additional+2] <= high[n_additional] and high[n_additional+i+2] < high[n_additional])
+    upflagUpFrontier3_additional := upflagUpFrontier3_additional and (high[n_additional+1] <= high[n_additional] and high[n_additional+2] <= high[n_additional] and high[n_additional+3] <= high[n_additional] and high[n_additional+i + 3] < high[n_additional])
+    upflagUpFrontier4_additional := upflagUpFrontier4_additional and (high[n_additional+1] <= high[n_additional] and high[n_additional+2] <= high[n_additional] and high[n_additional+3] <= high[n_additional] and high[n_additional+4] <= high[n_additional] and high[n_additional+i + 4] < high[n_additional])
+flagUpFrontier_additional = upflagUpFrontier0_additional or upflagUpFrontier1_additional or upflagUpFrontier2_additional or upflagUpFrontier3_additional or upflagUpFrontier4_additional
+
+upFractal_additional = (upflagDownFrontier_additional and flagUpFrontier_additional)
+
+
+// downFractal
+bool downflagDownFrontier_additional = true
+bool downflagUpFrontier0_additional = true
+bool downflagUpFrontier1_additional = true
+bool downflagUpFrontier2_additional = true
+bool downflagUpFrontier3_additional = true
+bool downflagUpFrontier4_additional = true
+
+for i = 1 to n_additional
+    downflagDownFrontier_additional := downflagDownFrontier_additional and (low[n_additional-i] > low[n_additional])
+    downflagUpFrontier0_additional := downflagUpFrontier0_additional and (low[n_additional+i] > low[n_additional])
+    downflagUpFrontier1_additional := downflagUpFrontier1_additional and (low[n_additional+1] >= low[n_additional] and low[n_additional+i + 1] > low[n_additional])
+    downflagUpFrontier2_additional := downflagUpFrontier2_additional and (low[n_additional+1] >= low[n_additional] and low[n_additional+2] >= low[n_additional] and low[n_additional+i + 2] > low[n_additional])
+    downflagUpFrontier3_additional := downflagUpFrontier3_additional and (low[n_additional+1] >= low[n_additional] and low[n_additional+2] >= low[n_additional] and low[n_additional+3] >= low[n_additional] and low[n_additional+i + 3] > low[n_additional])
+    downflagUpFrontier4_additional := downflagUpFrontier4_additional and (low[n_additional+1] >= low[n_additional] and low[n_additional+2] >= low[n_additional] and low[n_additional+3] >= low[n_additional] and low[n_additional+4] >= low[n_additional] and low[n_additional+i + 4] > low[n_additional])
+flagDownFrontier_additional = downflagUpFrontier0_additional or downflagUpFrontier1_additional or downflagUpFrontier2_additional or downflagUpFrontier3_additional or downflagUpFrontier4_additional
+
+downFractal_additional = (downflagDownFrontier_additional and flagDownFrontier_additional)
+
+
+plotshape(upFractal_additional and showAdditionalFractals, style=shape.xcross,   location=location.abovebar, offset=-n_additional, color=color.green, size = size.small)
+plotshape(downFractal_additional and showAdditionalFractals, style=shape.xcross,   location=location.belowbar, offset=-n_additional, color=color.red, size = size.small)
+
+// ---MAIN--- //
+
+var minFs = array.new_float(0)          // Minimum fractals
+var maxFs = array.new_float(0)          // Maximum fractals
+var minFs_indexes = array.new_int(0)    // Minimum fractals indexes
+var maxFs_indexes = array.new_int(0)    // Maximum fractals indexes
+
+var float levelUp = na                  // Highest breaked fractal
+var float levelDown = na                // Lowest breaked fractal
+
+var float rangeAfterBreaking_top = na   
+var float rangeAfterBreaking_bottom = na
+
+var float retestLevel_top = na
+var float retestLevel_bottom = na
+
+var float breakedFractal_top = na
+var float breakedFractal_bottom = na
+
+var bool waitBreakingUp = na
+var bool waitBreakingDown = na
+
+var bool waitDownFractal = na
+var bool waitUpFractal = na
+
+var bool retestDetected_top = na
+var bool retestDetected_bottom = na
+
+var bool waitRetestBottom = na
+var bool waitRetestTop = na
+
+// Показываем момент ретеста
+plotshape((not na(retestLevel_bottom) and close > retestLevel_bottom and showRetestSignal) or (retestDetected_bottom and showRetestSignal), title="Ретест нижнего уровня", style=shape.labelup, text="Retest bottom", textcolor=color.white, location=location.belowbar, color=color.red, size = size.small)
+plotshape((not na(retestLevel_top) and close < retestLevel_top and showRetestSignal) or (retestDetected_top and showRetestSignal), title="Ретест верхнего уровня", style=shape.labeldown, text="Retest top", textcolor=color.white, location=location.abovebar, color=color.green, size = size.small)
+
+retestDetected_top := false
+retestDetected_bottom := false
+
+if not na(retestLevel_bottom) and close > retestLevel_bottom
+    retestLevel_bottom := na
+    breakedFractal_bottom := na
+    waitRetestBottom := false
+    
+    if showRetestAlert
+        alert("Retest bottom")
+if not na(retestLevel_top) and close < retestLevel_top
+    retestLevel_top := na
+    breakedFractal_top := na
+    waitRetestTop := false
+    
+    if showRetestAlert
+        alert("Retest top")
+
+// Сформировался нижний фрактал после пробития вниз
+if upFractal_additional and waitUpFractal
+    waitUpFractal := false
+    waitRetestTop := true
+        
+    distance = high[n_additional] - array.get(minFs, 0)
+    rangeAfterBreaking_top := high[n_additional] - (distance / 2) + distance * afterBeaking_topRangePercent
+    rangeAfterBreaking_bottom := high[n_additional] - (distance / 2) - distance * afterBeaking_bottomRangePercent
+    
+    retestLevel_top := na
+    for i = 0 to array.size(maxFs) - 1
+        fractalForRange = array.get(maxFs, i)
+        
+        if rangeAfterBreaking_top > fractalForRange and fractalForRange > rangeAfterBreaking_bottom
+            if na(retestLevel_top)
+                retestLevel_top := fractalForRange
+            
+            if fractalForRange > retestLevel_top
+                retestLevel_top := fractalForRange
+    
+    breakedFractal_top := retestLevel_top
+    retestLevel_top := retestLevel_top + (high[n_additional] - retestLevel_top) * levelRetestPercent
+    
+    for i = 1 to n_additional
+        if low[i] < retestLevel_top
+            retestDetected_top := true
+            waitRetestTop := false
+            retestLevel_top := na
+            break
+
+// Сформировался верхний фрактал после пробития вверх
+if downFractal_additional and waitDownFractal
+    waitDownFractal := false
+    waitRetestBottom := true
+    
+    distance = array.get(maxFs, 0) - low[n_additional]
+    rangeAfterBreaking_top := low[n_additional] + (distance / 2) + distance * afterBeaking_topRangePercent
+    rangeAfterBreaking_bottom := low[n_additional] + (distance / 2) - distance * afterBeaking_bottomRangePercent
+    
+    retestLevel_bottom := na
+    for i = 0 to array.size(minFs) - 1
+        fractalForRange = array.get(minFs, i)
+        
+        if rangeAfterBreaking_top > fractalForRange and fractalForRange > rangeAfterBreaking_bottom
+            if na(retestLevel_bottom)
+                retestLevel_bottom := fractalForRange
+            
+            if fractalForRange < retestLevel_bottom
+                retestLevel_bottom := fractalForRange
+
+    breakedFractal_bottom := retestLevel_bottom
+    retestLevel_bottom := retestLevel_bottom - (retestLevel_bottom - low[n_additional]) * levelRetestPercent
+    
+    for i = 1 to n_additional
+        if high[i] > retestLevel_bottom
+            retestDetected_bottom := true
+            waitRetestBottom := false
+            retestLevel_bottom := na
+            break
+
+// Показать фрактал сделавший прбитие
+// plotshape(upFractal_additional and waitRetestTop and not waitRetestTop[1] and showMainLevelsBreaking, title="Верхний фрактал после пробития", style=shape.labeldown, text="Breaking top", textcolor=color.white, location=location.abovebar, offset=-n_additional, color=color.green, size = size.small)
+// plotshape(downFractal_additional and waitRetestBottom and not waitRetestBottom[1] and showMainLevelsBreaking, title="Нижний фрактал посе пробития", style=shape.labelup, text="Breaking down", textcolor=color.white, location=location.belowbar, offset=-n_additional, color=color.red, size = size.small)
+
+// Если появился нижний фрактал, то задаем ожидание пробития верхнего фрактала
+if downFractal
+    waitBreakingUp := true
+    waitBreakingDown := false
+        
+// Если появился верхний фрактал, то задаем ожидания пробития нижнего фрактала
+if upFractal
+    waitBreakingDown := true
+    waitBreakingUp := false
+
+// Пробитие верхнего фрактала
+if array.size(maxFs) > 0 and waitBreakingUp
+    if close > array.get(maxFs, 0)
+        waitBreakingUp := false
+        waitUpFractal := true
+
+// Пробитие нижнего фрактала
+if array.size(minFs) > 0 and waitBreakingDown
+    if close < array.get(minFs, 0)
+        waitBreakingDown := false
+        waitDownFractal := true
+
+// Определение верхних фракталов для уровня
+if upFractal
+    array.unshift(maxFs, high[n])
+        
+    array.unshift(maxFs_indexes, bar_index[n])
+    
+    if array.size(maxFs) > numberFs
+        array.pop(maxFs)
+            
+    if array.size(maxFs_indexes) > numberFs
+        array.pop(maxFs_indexes)
+
+// Определение нижних фракталов для уровня
+if downFractal
+    array.unshift(minFs, low[n])
+        
+    array.unshift(minFs_indexes, bar_index[n])
+    
+    if array.size(minFs) > numberFs
+        array.pop(minFs)
+        
+    if array.size(minFs_indexes) > numberFs
+        array.pop(minFs_indexes)
+        
+// Визуализация
+var line afterBreaking_topLine = na
+var line afterBreaking_bottomLine = na
+
+var line retest_topLine = na
+var line retest_bottomLine = na
+
+if showRangeAfterBreaking
+    line.delete(afterBreaking_topLine)
+    line.delete(afterBreaking_bottomLine)
+    
+    afterBreaking_topLine := line.new(x1=bar_index[1], y1=rangeAfterBreaking_top, x2=bar_index, y2=rangeAfterBreaking_top, extend=extend.both, style=line.style_dashed, color=color.red)
+    afterBreaking_bottomLine := line.new(x1=bar_index[1], y1=rangeAfterBreaking_bottom, x2=bar_index, y2=rangeAfterBreaking_bottom, extend=extend.both, style=line.style_dashed, color=color.green)
+    
+if showRetestLine
+    line.delete(retest_topLine)
+    line.delete(retest_bottomLine)
+    
+    retest_topLine := line.new(x1=bar_index[1], y1=retestLevel_top, x2=bar_index, y2=retestLevel_top, extend=extend.both, style=line.style_dashed, color=color.purple)
+    retest_bottomLine := line.new(x1=bar_index[1], y1=breakedFractal_bottom, x2=bar_index, y2=breakedFractal_bottom, extend=extend.both, style=line.style_dashed, color=color.blue)

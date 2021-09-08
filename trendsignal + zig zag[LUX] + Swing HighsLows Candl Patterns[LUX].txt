@@ -1,0 +1,250 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+study("trendsignal + zig zag[LUX] + Swing Highs/Lows Candl Patterns[LUX]", overlay=true, max_bars_back=1000)
+
+//---INPUT---
+
+RISK = input(3, title="RISK", type=input.integer)
+Alert_Delay_In_Seconds = input(0, title="Alert_Delay_In_Seconds", type=input.integer)
+alertsOn = input(false, title="Включить оповещения?", type=input.bool)
+
+//---INPUT END---
+
+bool isBuy = na
+
+int SSP = 9
+var int PrevAlertTime = 0
+var float alertBar = 0
+
+var int K = na
+float Range = 0
+float AvgRange = 0
+var float smin = na
+var float smax = na
+var float SsMax = na
+var float SsMin = na
+var float price = na
+var bool uptrend = na
+var bool old = false
+
+// var int limit = bar_index - counted_bars
+// if counted_bars == 0
+int limit = 1 + SSP
+
+K := 33 - RISK
+for shift = limit to 0
+    for i = shift to (shift + SSP)
+        AvgRange += high[i] - low[i]
+        
+    Range := AvgRange / (SSP + 1)
+    
+    SsMax := high[shift]
+    SsMin := low[shift]
+    for i = shift to (shift + SSP - 1)
+        price := high[i]
+        if SsMax < price
+            SsMax := price
+        price := low[i]
+        if SsMin > price
+            SsMin := price
+            
+    smin := SsMin + (SsMax - SsMin)*K/100
+    smax := SsMax - (SsMax - SsMin)*K/100
+    
+    if close[shift] < smin
+        uptrend := false
+    
+    if close[shift] > smax
+        uptrend := true
+    
+    if uptrend != old and uptrend == true
+        
+        if bar_index > alertBar and shift == 0
+            isBuy := true
+            alertBar := bar_index
+            PrevAlertTime := time
+    
+    if uptrend != old and uptrend == false and (time - PrevAlertTime > 1 * Alert_Delay_In_Seconds)
+        
+        if bar_index > alertBar and shift == 0  and (time - PrevAlertTime > 1 * Alert_Delay_In_Seconds)
+            isBuy := false
+            alertBar := bar_index
+            PrevAlertTime := time
+    
+    old := uptrend
+
+plotshape(isBuy == true, title="Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(isBuy == false, title="Sell", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+//---trendsignal END---
+
+
+//------------------------------------------------------------------------------
+length      = input(100)
+extend      = input(true,'Extend To Last Bar')
+show_ext    = input(true,'Show Extremities') 
+show_labels = input(true,'Show Labels') 
+
+//Style
+
+upcol = input(#ff1100,'Upper Extremity Color',group='Style')
+midcol = input(#ff5d00,'Zig Zag Color',group='Style')
+dncol = input(#2157f3,'Lower Extremity Color',group='Style')
+//------------------------------------------------------------------------------
+os = 0
+src = close
+n = bar_index
+var float valtop = na
+var float valbtm = na
+
+//------------------------------------------------------------------------------
+upper = highest(src,length)
+lower = lowest(src,length)
+os := src[length] > upper ? 0 : src[length] < lower ? 1 : os[1]
+
+btm = os == 1 and os[1] != 1
+top = os == 0 and os[1] != 0
+
+//------------------------------------------------------------------------------
+
+btm_n = valuewhen(btm,n,0)
+top_n = valuewhen(top,n,0)
+len = abs(btm_n - top_n)
+
+if btm
+    max_diff_up = 0.
+    max_diff_dn = 0.
+    valbtm := low[length]
+    
+    for i = 0 to len-1
+        point = low[length] + i/(len-1)*(valtop - low[length])
+        max_diff_up := max(max(src[length+i],open[length+i]) - point,max_diff_up)
+        max_diff_dn := max(point - min(src[length+i],open[length+i]),max_diff_dn)
+        
+    line.new(n[len+length],valtop,n[length],low[length],color=midcol)
+    
+    if show_ext
+        line.new(n[len+length],valtop+max_diff_up,n[length],low[length]+max_diff_up
+          ,color=upcol,style=line.style_dotted)
+        line.new(n[len+length],valtop-max_diff_dn,n[length],low[length]-max_diff_dn
+          ,color=dncol,style=line.style_dotted)
+    if show_labels
+        label.new(n[length],low[length],tostring(low[length],'#.####'),color=#00000000
+          ,style=label.style_label_up,textcolor=dncol,textalign=text.align_left,size=size.small)
+
+if top
+    max_diff_up = 0.
+    max_diff_dn = 0.
+    valtop := high[length]
+    
+    for i = 0 to len-1
+        point = high[length] + i/(len-1)*(valbtm - high[length])
+        max_diff_up := max(max(src[length+i],open[length+i]) - point,max_diff_up)
+        max_diff_dn := max(point - min(src[length+i],open[length+i]),max_diff_dn)
+    
+    line.new(n[len+length],valbtm,n[length],high[length],color=midcol)
+    
+    if show_ext
+        line.new(n[len+length],valbtm+max_diff_up,n[length],high[length]+max_diff_up
+          ,color=upcol,style=line.style_dotted)
+        line.new(n[len+length],valbtm-max_diff_dn,n[length],high[length]-max_diff_dn
+          ,color=dncol,style=line.style_dotted)
+    if show_labels
+        label.new(n[length],high[length],tostring(high[length],'#.####'),color=#00000000
+          ,style=label.style_label_down,textcolor=upcol,textalign=text.align_left,size=size.small)
+
+if barstate.islast and extend
+    max_diff_up = 0.
+    max_diff_dn = 0.  
+    x1 = 0
+    y1 = 0.
+    
+    if os == 1
+        x1 := btm_n-length
+        y1 := valbtm
+        
+        for i = 0 to n-btm_n+length-1
+            point = src + i/(n-btm_n+length-1)*(valbtm - src)
+            max_diff_up := max(max(src[i],open[i]) - point,max_diff_up)
+            max_diff_dn := max(point - min(src[i],open[i]),max_diff_dn)
+
+    else 
+        x1 := top_n-length
+        y1 := valtop
+        
+        for i = 0 to n-top_n+length-1
+            point = src + i/(n-top_n+length-1)*(valtop - src)
+            max_diff_up := max(max(src[i],open[i]) - point,max_diff_up)
+            max_diff_dn := max(point - min(src[i],open[i]),max_diff_dn)
+        
+    line.delete(line.new(x1,y1,n,src,color=midcol,extend=extend.right)[1])
+    
+    if show_ext
+        line.delete(line.new(x1,y1+max_diff_up,n,src+max_diff_up
+          ,color=upcol,style=line.style_dotted,extend=extend.right)[1])
+        line.delete(line.new(x1,y1-max_diff_dn,n,src-max_diff_dn
+          ,color=dncol,style=line.style_dotted,extend=extend.right)[1])
+          
+//------------------------------------------------------------------------------
+plot(btm ? low[length] : top ? high[length] : na,'Circles'
+  ,color = btm ? dncol : upcol
+  ,style=plot.style_circles
+  ,offset=-length)
+
+//---------------------------------------
+lengthS = input(21)
+//------------------------------------------------------------------------------
+o = open[lengthS],h = high[lengthS]
+l = low[lengthS],c = close[lengthS]
+//------------------------------------------------------------------------------
+ph = pivothigh(close,lengthS,lengthS)
+pl = pivotlow(open,lengthS,lengthS)
+valH = valuewhen(ph,c,0)
+valL = valuewhen(pl,c,0)
+valpH = valuewhen(ph,c,1)
+valpL = valuewhen(pl,c,1)
+//------------------------------------------------------------------------------
+d = abs(c - o)
+hammer = pl and min(o,c) - l > d and h - max(c,o) < d
+ihammer = pl and h - max(c,o) > d and min(c,o) - l < d
+bulleng = c > o and c[1] < o[1] and c > o[1] and o < c[1]
+hanging = ph and min(c,o) - l > d and h - max(o,c) < d
+shooting = ph and h - max(o,c) > d and min(c,o) - l < d
+beareng = c > o and c[1] < o[1] and c > o[1] and o < c[1]
+//------------------------------------------------------------------------------
+//Descriptions
+//------------------------------------------------------------------------------
+hammer_ = "The hammer candlestick pattern is formed of a short body with a long lower wick, and is found at the bottom of a downward trend."
+  + "\n" + "\n A hammer shows that although there were selling pressures during the day, ultimately a strong buying pressure drove the price back up." 
+ihammer_ = "The inverted hammer is a similar pattern than the hammer pattern. The only difference being that the upper wick is long, while the lower wick is short."
+  + "\n" + "\n It indicates a buying pressure, followed by a selling pressure that was not strong enough to drive the market price down. The inverse hammer suggests that buyers will soon have control of the market."
+bulleng_ = "The bullish engulfing pattern is formed of two candlesticks. The first candle is a short red body that is completely engulfed by a larger green candle"
+  + "\n" + "\n Though the second day opens lower than the first, the bullish market pushes the price up, culminating in an obvious win for buyers"
+hanging_ = "The hanging man is the bearish equivalent of a hammer; it has the same shape but forms at the end of an uptrend."
+  + "\n" + "It indicates that there was a significant sell-off during the day, but that buyers were able to push the price up again. The large sell-off is often seen as an indication that the bulls are losing control of the market."
+shotting_ = "The shooting star is the same shape as the inverted hammer, but is formed in an uptrend: it has a small lower body, and a long upper wick."
+  + "\n" + "Usually, the market will gap slightly higher on opening and rally to an intra-day high before closing at a price just above the open – like a star falling to the ground."
+beareng_ = "A bearish engulfing pattern occurs at the end of an uptrend. The first candle has a small green body that is engulfed by a subsequent long red candle."
+  + "\n" + "It signifies a peak or slowdown of price movement, and is a sign of an impending market downturn. The lower the second candle goes, the more significant the trend is likely to be."
+//------------------------------------------------------------------------------
+n_i = bar_index
+label lbl = na
+H = valH > valpH ? "HH" : valH < valpH ? "LH" : na
+L = valL < valpL ? "LL" : valL > valpL ? "HL" : na
+txt = hammer ? "Hammer" : ihammer ? "Inverse Hammer" :
+  bulleng ? "Bullish Engulfing" : hanging ? "Hanging Man" :
+  shooting ? "Shooting Star" : beareng ? "Bearish Engulfing" : "None"
+des = hammer ? hammer_ : ihammer ? ihammer_ :
+  bulleng ? bulleng_ : hanging ? hanging_ :
+  shooting ? shotting_ : beareng ? beareng_ : ""
+if ph
+    lbl := label.new(n_i[lengthS],max(c,o),H + "\n" + txt,color=#ff1100,
+      style=label.style_label_down,textcolor=color.white,tooltip=des)
+    label.delete(lbl[1])
+else if pl
+    lbl := label.new(n_i[lengthS],min(c,o),L + "\n" + txt,color=#2157f3,
+      style=label.style_label_up,textcolor=color.white,tooltip=des)
+    label.delete(lbl[1])
+//------------------------------------------------------------------------------

@@ -1,0 +1,402 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+strategy("[Order]Breaking fractals", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=1, pyramiding = 99, calc_on_every_tick=false)
+
+//---Ввод Данных----------------------------------------------------------------
+
+higherTimeframe = input(title="Крупный таймфрейм ", defval="D", type=input.resolution, group="Фракталы")
+n_daily = input(title="Период для крупного фрактала", defval=2, minval=2, type=input.integer, group="Фракталы")
+current_n = input(title="Период для текущего фрактала", defval=2, minval=2, type=input.integer, group="Фракталы")
+showFractals = input(title="Какие фрактала показать", defval="Никакие", options=["Текущий таймфрейм", "Крупный таймфрейм", "Никакие"], group="Фракталы")
+stopLossType = input(title="Тип стоплосса", defval="Трейлинг", options=["Трейлинг", "Дневной", "ATR"], group="Стоп-лосс")
+nATRPeriod = input(5, title="ATR период", type=input.integer, group="Стоп-лосс")
+nATRMultip = input(3.5, title="ATR множитель", type=input.float, group="Стоп-лосс")
+
+ordersAllowedSide = input("Обе", title="В какую сторону открывать сделки", options=["Обе", "лонг", "шорт"], group="Настройки ордеров")
+ordersOnTrend = input(false, title="Докупать по тренду", type=input.bool, group="Настройки ордеров")
+openZeroOrder = input(true, title="Открыть нулевой ордер", type=input.bool, group="Настройки ордеров")
+allowOrdersDistance = input(false, title="Использовать расстояние между ордерами", type=input.bool, group="Настройки ордеров")
+ordersDistance = input(5, title="Минимальное расстояние между ордерами(%)", type=input.float, step=0.1, group="Настройки ордеров")/100
+
+showFractalsLineForBreaking = input(title="Показать фракталы с пробоем", defval=true, type=input.bool, group="Визуальная часть")
+showTrend = input(title="Показать тренд", defval=true, type=input.bool, group="Визуальная часть")
+showStopLoss = input(title="Показать стоплосс", defval=true, type=input.bool, group="Визуальная часть")
+showStatistics = input(title="Показать статистику", defval=true, type=input.bool, group="Визуальная часть")
+showAveragePriceOfOpenOrders = input(title="Показать среднюю цену открытых позиций", defval=true, type=input.bool, group="Визуальная часть")
+
+//---Ввод Данных конец----------------------------------------------------------
+
+//---Фракталы крупного таймфрейма-----------------------------------------------
+
+//Верх и низ свечи с другого таймфрейма
+[high_daily, low_daily] = security(syminfo.tickerid, higherTimeframe, [high, low], barmerge.gaps_on)
+
+// Врехний фрактал
+var high_dailyArr = array.new_float(2*n_daily+5)
+var low_dailyArr = array.new_float(2*n_daily+5)
+
+bool upflagDownFrontier_daily = true
+bool upflagUpFrontier0_daily = true
+bool upflagUpFrontier1_daily = true
+bool upflagUpFrontier2_daily = true
+bool upflagUpFrontier3_daily = true
+bool upflagUpFrontier4_daily = true
+
+bool flagUpFrontier_daily = na
+bool upFractal_daily = na
+
+if nz(high_daily) != 0 
+    array.unshift(high_dailyArr, high_daily)
+    array.pop(high_dailyArr)
+
+    for i = 1 to n_daily
+        upflagDownFrontier_daily := upflagDownFrontier_daily and (array.get(high_dailyArr, n_daily-i) < array.get(high_dailyArr, n_daily))
+        upflagUpFrontier0_daily := upflagUpFrontier0_daily and (array.get(high_dailyArr, n_daily+i) < array.get(high_dailyArr, n_daily))
+        upflagUpFrontier1_daily := upflagUpFrontier1_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 1) < array.get(high_dailyArr, n_daily))
+        upflagUpFrontier2_daily := upflagUpFrontier2_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+2) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 2) < array.get(high_dailyArr, n_daily))
+        upflagUpFrontier3_daily := upflagUpFrontier3_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+2) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+3) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 3) < array.get(high_dailyArr, n_daily))
+        upflagUpFrontier4_daily := upflagUpFrontier4_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+2) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+3) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+4) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 4) < array.get(high_dailyArr, n_daily))
+    flagUpFrontier_daily := upflagUpFrontier0_daily or upflagUpFrontier1_daily or upflagUpFrontier2_daily or upflagUpFrontier3_daily or upflagUpFrontier4_daily
+
+    upFractal_daily := (upflagDownFrontier_daily and flagUpFrontier_daily)
+    
+// Нижний фрактал
+bool downflagDownFrontier_daily = true
+bool downflagUpFrontier0_daily = true
+bool downflagUpFrontier1_daily = true
+bool downflagUpFrontier2_daily = true
+bool downflagUpFrontier3_daily = true
+bool downflagUpFrontier4_daily = true
+
+bool flagDownFrontier_daily = na
+bool downFractal_daily = na
+
+if nz(low_daily) != 0 
+    array.unshift(low_dailyArr, low_daily)
+    array.pop(low_dailyArr)
+    
+    for i = 1 to n_daily
+        downflagDownFrontier_daily := downflagDownFrontier_daily and (array.get(low_dailyArr, n_daily-i) > array.get(low_dailyArr, n_daily))
+        downflagUpFrontier0_daily := downflagUpFrontier0_daily and (array.get(low_dailyArr, n_daily+i) > array.get(low_dailyArr, n_daily))
+        downflagUpFrontier1_daily := downflagUpFrontier1_daily and (array.get(low_dailyArr, n_daily+1) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+i + 1) > array.get(low_dailyArr, n_daily))
+        downflagUpFrontier2_daily := downflagUpFrontier2_daily and (array.get(low_dailyArr, n_daily+1) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+2) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+i + 2) > array.get(low_dailyArr, n_daily))
+        downflagUpFrontier3_daily := downflagUpFrontier3_daily and (array.get(low_dailyArr, n_daily+1) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+2) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+3) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+i + 3) > array.get(low_dailyArr, n_daily))
+        downflagUpFrontier4_daily := downflagUpFrontier4_daily and (array.get(low_dailyArr, n_daily+1) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+2) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+3) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+4) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+i + 4) > array.get(low_dailyArr, n_daily))
+    flagDownFrontier_daily := downflagUpFrontier0_daily or downflagUpFrontier1_daily or downflagUpFrontier2_daily or downflagUpFrontier3_daily or downflagUpFrontier4_daily
+    
+    downFractal_daily := (downflagDownFrontier_daily and flagDownFrontier_daily)
+
+//---Фракталы крупного таймфрейма-----------------------------------------------
+
+//---Фракталы текущего таймфрейм------------------------------------------------
+
+// Верхний фрактал
+bool upflagDownFrontier = true
+bool upflagUpFrontier0 = true
+bool upflagUpFrontier1 = true
+bool upflagUpFrontier2 = true
+bool upflagUpFrontier3 = true
+bool upflagUpFrontier4 = true
+
+for i = 1 to current_n
+    upflagDownFrontier := upflagDownFrontier and (high[current_n-i] < high[current_n])
+    upflagUpFrontier0 := upflagUpFrontier0 and (high[current_n+i] < high[current_n])
+    upflagUpFrontier1 := upflagUpFrontier1 and (high[current_n+1] <= high[current_n] and high[current_n+i + 1] < high[current_n])
+    upflagUpFrontier2 := upflagUpFrontier2 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+i + 2] < high[current_n])
+    upflagUpFrontier3 := upflagUpFrontier3 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+3] <= high[current_n] and high[current_n+i + 3] < high[current_n])
+    upflagUpFrontier4 := upflagUpFrontier4 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+3] <= high[current_n] and high[current_n+4] <= high[current_n] and high[current_n+i + 4] < high[current_n])
+flagUpFrontier = upflagUpFrontier0 or upflagUpFrontier1 or upflagUpFrontier2 or upflagUpFrontier3 or upflagUpFrontier4
+
+upFractal = (upflagDownFrontier and flagUpFrontier)
+
+// Нижний фрактал
+bool downflagDownFrontier = true
+bool downflagUpFrontier0 = true
+bool downflagUpFrontier1 = true
+bool downflagUpFrontier2 = true
+bool downflagUpFrontier3 = true
+bool downflagUpFrontier4 = true
+
+for i = 1 to current_n
+    downflagDownFrontier := downflagDownFrontier and (low[current_n-i] > low[current_n])
+    downflagUpFrontier0 := downflagUpFrontier0 and (low[current_n+i] > low[current_n])
+    downflagUpFrontier1 := downflagUpFrontier1 and (low[current_n+1] >= low[current_n] and low[current_n+i + 1] > low[current_n])
+    downflagUpFrontier2 := downflagUpFrontier2 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+i + 2] > low[current_n])
+    downflagUpFrontier3 := downflagUpFrontier3 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+3] >= low[current_n] and low[current_n+i + 3] > low[current_n])
+    downflagUpFrontier4 := downflagUpFrontier4 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+3] >= low[current_n] and low[current_n+4] >= low[current_n] and low[current_n+i + 4] > low[current_n])
+flagDownFrontier = downflagUpFrontier0 or downflagUpFrontier1 or downflagUpFrontier2 or downflagUpFrontier3 or downflagUpFrontier4
+
+downFractal = (downflagDownFrontier and flagDownFrontier)
+
+//---Фракталы текущего таймфрейма конце---------------------------------------------------------------
+
+//---Основной алгорит---------------------------------------------------------------
+
+var ordersSize = array.new_float(0)
+
+//Определяем цена фракталов
+var float upFractal_highDaily = na      //Цена верхнего фрактала для крупного таймфрейма
+var float downFractal_lowDaily = na     //Цена ниженго фрактала для крупного таймфрейма
+var float upFractal_high = na           //Цена верхнего фрактала для текущего таймфрейма
+var float downFractal_low = na          //Цена нижнего фрактала для текущего фрактала
+
+var float previousOrderPrice = na       //Цена предыдущего ордера
+
+var float stopLoss = na
+
+var int upFractalBarIndex = na          //Индекс бара для верхнего фрактала на крупном таймфрейме
+var int downFractalBarIndex = na        //Индекс бара для нижнего фрактала на крупном таймфрейме
+
+var bool isTrendBullish = na            //Определяет тренд
+var bool breakingHighBecame = na        //Определяет пробитие верхнего фрактала
+var bool breakingLowBecame = na         //Определяет пробитие нижнего фрактала
+
+// for telegram
+var float trendBeginingPrice = na
+
+//Выход по стоплоссу
+if isTrendBullish
+    if close < stopLoss
+        strategy.close_all(comment="Close long orders", alert_message='"signal":"SELL", "side":"LONG", "zeroOrderPrice":' + tostring(trendBeginingPrice)) //Закрытие всех шортов
+        previousOrderPrice := na
+        
+        if not (stopLossType == "ATR")
+            stopLoss := na
+else
+    if close > stopLoss
+        strategy.close_all(comment="Close short orders", alert_message='"signal":"SELL", "side":"SHORT", "zeroOrderPrice":' + tostring(trendBeginingPrice)) //Закрытие всех лонгов
+        previousOrderPrice := na
+        
+        if not (stopLossType == "ATR")
+            stopLoss := na
+
+//Определение дневных фракталов
+if upFractal_daily
+    upFractal_highDaily := array.get(high_dailyArr, n_daily)
+    
+    //Определяем индекс бара верхнего фрактала для крупного таймфрема
+    for i = 1 to 100000
+        if upFractal_highDaily == high[i]
+            upFractalBarIndex := bar_index[i] 
+            break
+    
+    if not isTrendBullish
+        stopLoss := upFractal_highDaily
+        
+if downFractal_daily
+    downFractal_lowDaily := array.get(low_dailyArr, n_daily)
+    
+    //Определяем индекс бара верхнего фрактала для крупного таймфрема
+    for i = 1 to 100000
+        if downFractal_lowDaily == low[i]
+            downFractalBarIndex := bar_index[i] 
+            break
+            
+    if isTrendBullish
+        stopLoss := downFractal_lowDaily
+
+//Определение тренда на дневном графике
+var float pendingOrderPrice = na //Цена отложенного ордера
+
+//Пробой верхнего фрактала на крупном графике
+if(close > upFractal_highDaily and not isTrendBullish)
+    array.clear(ordersSize)
+    isTrendBullish := true //Бычий тренд
+    breakingHighBecame := true 
+    breakingLowBecame := false
+    pendingOrderPrice := na
+
+//Пробой нижнего фрактала на крупном графике
+if(close < downFractal_lowDaily and isTrendBullish)
+    array.clear(ordersSize)
+    isTrendBullish := false //Тренд медвежий
+    breakingHighBecame := false
+    breakingLowBecame := true
+    pendingOrderPrice := na
+
+if isTrendBullish //Если тренд бычий
+    //При появлении нового верхенего фрактала на текущем таймфрейме обновляем цену отложенного ордера
+    if upFractal
+        pendingOrderPrice := high[current_n]
+    
+    //Определяем стоплосс для бычего рынка
+    if downFractal and stopLossType == "Трейлинг"
+        stopLoss := low[current_n]
+    
+    //Открытие лонга
+    if close > pendingOrderPrice and not na(pendingOrderPrice)
+        pendingOrderPrice := na
+        string orderMessage = na
+        if strategy.opentrades == 0
+            orderMessage := '"signal":"BUY", "side":"LONG", "state":"FIRST"'
+        else
+            orderMessage := '"signal":"BUY", "side":"LONG", "state":"ADDITIONAL"'
+        
+        longCondition = true
+        if not na(previousOrderPrice)
+            longCondition := not ordersOnTrend or (ordersOnTrend and close > previousOrderPrice)
+        
+        if allowOrdersDistance and not na(previousOrderPrice)
+            previuosOrderPriceRange_top = previousOrderPrice * (1 + ordersDistance)
+            longCondition := longCondition and close > previuosOrderPriceRange_top
+        
+        if longCondition and ordersAllowedSide != "шорт"
+            strategy.entry("long", strategy.long, alert_message=orderMessage + ',"zeroOrderPrice":' + tostring(trendBeginingPrice))
+            previousOrderPrice := close
+        
+        array.push(ordersSize, strategy.position_size)
+else //Если медвежий тренд
+    //При появлении нового нижнего фрактала на текущем таймфрейме обновляем цену отложенного ордера
+    if downFractal
+        pendingOrderPrice := low[current_n]
+        
+    //Определяем сотоплосс для медвежего рынка
+    if upFractal and stopLossType == "Трейлинг"
+        stopLoss := high[current_n]
+    
+    //Открытие шорта
+    if close < pendingOrderPrice and not na(pendingOrderPrice)
+        pendingOrderPrice := na
+        string orderMessage = na
+        if strategy.opentrades == 0
+            orderMessage := '"signal":"BUY", "side":"SHORT", "state":"FIRST"'
+        else
+            orderMessage := '"signal":"BUY", "side":"SHORT", "state":"ADDITIONAL"'
+        
+        shortCondition = true
+        if not na(previousOrderPrice)
+            shortCondition := not ordersOnTrend or (ordersOnTrend and close < previousOrderPrice)
+        
+        if allowOrdersDistance and not na(previousOrderPrice)
+            previuosOrderPriceRange_bottom = previousOrderPrice * (1 - ordersDistance)
+            shortCondition := shortCondition and close < previuosOrderPriceRange_bottom
+        
+        if shortCondition and ordersAllowedSide != "лонг"
+            strategy.entry("short", strategy.short, alert_message=orderMessage + ',"zeroOrderPrice":' + tostring(trendBeginingPrice))
+            previousOrderPrice := close
+        
+        array.push(ordersSize, strategy.position_size)
+
+bool pos = na
+if stopLossType == "ATR"
+    xATR = atr(nATRPeriod)
+    nLoss = nATRMultip * xATR
+
+    stopLoss := iff(close > nz(stopLoss[1], 0) and close[1] > nz(stopLoss[1], 0), max(nz(stopLoss[1]), close - nLoss), iff(close < nz(stopLoss[1], 0) and close[1] < nz(stopLoss[1], 0), min(nz(stopLoss[1]), close + nLoss), iff(close > nz(stopLoss[1], 0), close - nLoss, close + nLoss)))
+
+    pos :=	iff(close[1] < nz(stopLoss[1], 0) and close > nz(stopLoss[1], 0), 1, iff(close[1] > nz(stopLoss[1], 0) and close < nz(stopLoss[1], 0), -1, nz(pos[1], 0)))
+// plot(stopLoss)
+//---Основной алгоритм конец----------------------------------------------------
+
+//---Рисуем фракталы------------------------------------------------------------
+
+bool showCurrentUpFractal = na
+bool showCurrentDownFractal = na
+bool showDailyUpFractal = na
+bool showDailyDownFractal = na
+
+//Определяем какие фракталы показывать
+if showFractals == "Крупный таймфрейм"
+    showDailyUpFractal := upFractal_daily
+    showDailyDownFractal := downFractal_daily
+else if showFractals == "Текущий таймфрейм"
+    showCurrentUpFractal := upFractal
+    showCurrentDownFractal := downFractal
+    
+//Показываем фракталы
+plotshape(showCurrentDownFractal, title="Нижний фрактал текущего таймфрейма",style=shape.cross, location=location.belowbar, offset=-current_n, color=#F44336, size = size.small)
+plotshape(showCurrentUpFractal, title="Верхний фрактал текущего таймфрейма", style=shape.cross,   location=location.abovebar, offset=-current_n, color=#009688, size = size.small)
+ 
+plotshape(showDailyUpFractal, title="Верхний фрактал высшего таймфрейма", style=shape.cross, location=location.abovebar, offset=-n_daily-10, color=#009688, size = size.small)
+plotshape(showDailyDownFractal, title="Нижний фрактал высшего таймфрейма", style=shape.cross, location=location.belowbar, offset=-n_daily-10, color=#F44336, size = size.small)
+
+// /---Показывае линию пробой---
+
+var float fractalHigh_forShowing = na
+var float fractalLow_forShowing = na
+if showFractalsLineForBreaking
+    if breakingHighBecame //Момент когда прозошла смена тренда на бычий
+        breakingHighBecame := false
+        line.new(x1=upFractalBarIndex, y1=upFractal_highDaily, x2=bar_index, y2=upFractal_highDaily, style=line.style_arrow_right)
+        if openZeroOrder and ordersAllowedSide != "шорт"
+            strategy.entry("longZero", strategy.long, alert_message='"signal":"BUY", "side":"LONG", "state":"ZERO"')
+            
+            trendBeginingPrice := close
+        
+    if breakingLowBecame //Момент когда прозошла смена тренда на медвежий
+        breakingLowBecame := false
+        line.new(x1=downFractalBarIndex, y1=downFractal_lowDaily, x2=bar_index, y2=downFractal_lowDaily, style=line.style_arrow_right)
+        if openZeroOrder and ordersAllowedSide !="лонг"
+            strategy.entry("shortZero", strategy.short, alert_message='"signal":"BUY", "side":"SHORT", "state":"ZERO"')
+            
+            trendBeginingPrice := close
+    
+// /---Показываем линию пробоя конец---
+
+// /---Показываем тренд---
+
+var bool showBullishTrend = na
+var bool showBearishTrend = na
+
+if showTrend
+    showBullishTrend := isTrendBullish
+    showBearishTrend := not isTrendBullish
+bgcolor(showBullishTrend ? color.new(color.green, 90) : na, title="Бычий тренд")
+bgcolor(showBearishTrend ? color.new(color.red, 90) : na, title="Медвежий тренд")
+
+// /---Показываем тренд конец---
+
+// /---Показываем стоплосс---
+
+var line stopLoss_upLine = na
+var line stopLoss_downLine = na
+
+line.delete(stopLoss_upLine)
+line.delete(stopLoss_downLine)
+
+if showStopLoss and strategy.opentrades > 0
+    stopLoss_downLine := line.new(x1=downFractalBarIndex, y1=stopLoss, x2=bar_index, y2=stopLoss, extend=extend.right, color=color.red, style=line.style_dashed)   
+    // if isTrendBullish
+    //     stopLoss_downLine := line.new(x1=downFractalBarIndex, y1=downFractal_lowDaily, x2=bar_index, y2=downFractal_lowDaily, extend=extend.right, color=color.red, style=line.style_dashed)   
+    // else if not isTrendBullish
+    //     stopLoss_upLine := line.new(x1=upFractalBarIndex, y1=upFractal_highDaily, x2=bar_index, y2=upFractal_highDaily, extend=extend.right, color=color.red, style=line.style_dashed)
+        
+// /---Показываем стоплосс---
+
+// /---Показываем среднюю цену открытых позиций---
+
+var line averagePriceOfOpenedOrders = na
+
+line.delete(averagePriceOfOpenedOrders)
+
+if showAveragePriceOfOpenOrders
+    if strategy.position_size != 0
+        averagePriceOfOpenedOrders := line.new(x1=bar_index-10, y1=strategy.position_avg_price, x2=bar_index, y2=strategy.position_avg_price, extend=extend.both, color=color.blue, style=line.style_dashed)
+
+// /---Показываем среднюю цену открытых позиций конец---
+
+// /---Показываем статистику по открытым ордерам---
+
+var table statistics = na
+var float income = na
+
+if showStatistics
+    income := strategy.openprofit / (strategy.position_size * strategy.position_avg_price) * 100
+    if not isTrendBullish
+        income *= -1
+    
+    statistics := table.new(position.top_right, 2, 4)
+    table.cell(statistics, 0, 0, "Кол-во открытых сделок: ")
+    table.cell(statistics, 1, 0, tostring(strategy.opentrades))
+    table.cell(statistics, 0, 1, "Доход от открытых сделок: ")
+    table.cell(statistics, 1, 1, tostring(round(income, 2)) + "% ")
+    table.cell(statistics, 0, 2, "Объем открытых сделок: ")
+    table.cell(statistics, 1, 2, tostring(round(strategy.position_size, 2)) + syminfo.basecurrency)
+    table.cell(statistics, 0, 3, "Средняя цена открытых ордеров: ")
+    table.cell(statistics, 1, 3, tostring(round(strategy.position_avg_price, 4)) + syminfo.currency)
+
+// /---Показываем статистику конец---
+
+//---Рисуем фракталы конец------------------------------------------------------
