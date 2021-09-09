@@ -2,12 +2,16 @@
 // © icewalk
 
 //@version=4
-strategy("[Order] RussiaFX strategy", overlay=true, margin_long=100, margin_short=100)
+study("[Order] RussiaFX strategy", overlay=true)
 
-[cl, min1, min2, max1, max2] = security(syminfo.tickerid, "D", [close[1], low[1], low[2], high[1], high[2]])
-
-long = close > cl and close > max1 and close > max2
+long = close > close[1] and close > high[1] and close > high[2]
 plotshape(long, "LONG", style=shape.arrowup, location=location.belowbar, color=color.green)
     
-short = close < cl and close < min1 and close < min2
+short = close < close[1] and close < low[1] and close < low[2]
 plotshape(short, "SHORT", style=shape.arrowdown, location=location.abovebar, color=color.red)
+
+if (long)
+    alert("Long Signal")
+    
+if (short)
+    alert("Short Signal")

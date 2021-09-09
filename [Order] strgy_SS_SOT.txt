@@ -1,0 +1,107 @@
+
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mil_Cheese
+//@version=4
+
+// Даниил, два параметра 1.Торговля только в живую 2. Открывается только одна сделка. Можно ли по умолчанию прописать про тики?
+
+strategy("[Order] strgy_SS_SOT", overlay=true, margin_long=1, margin_short=1, pyramiding=1, calc_on_every_tick=true)
+
+difference = input(0.001, title="difference", type = input.float) / 100
+tpsl = input(3, title="TP/SL", type = input.integer)
+bars = input(2, title="Bars", type = input.integer)
+liveTrading = input(true, title="Торговля в живую", type=input.bool)
+
+part = (high - low) / 3
+_sa_part1 = high - part
+_sot_part3 = low + part
+
+SA = close >= close [1] and crossover(close, _sa_part1) and  open > _sa_part1
+
+barcolor (SA ? color.green : na)
+SOT = close <= close[1] and crossunder(close, _sot_part3) and open < _sot_part3
+
+barcolor(SOT ? color.red : na)
+
+var float orderprice = na
+var float takeprofit = na
+var float stoploss = na
+var float bar_size = na
+
+var int initialIndexOfBar = na
+var int newOrderBar = bar_index
+
+var bool isSA = na
+var bool openOrder = na
+var bool isOpenedOrderOnCurrentBar = false
+
+if strategy.position_size > 0 and crossover(close, takeprofit)
+    strategy.close_all()
+if strategy.position_size < 0 and crossunder(close, takeprofit)
+    strategy.close_all()
+// Это для лосей
+if strategy.position_size < 0 and crossover(close, stoploss)
+    strategy.close_all()
+if strategy.position_size > 0 and crossunder(close, stoploss)
+    strategy.close_all()
+    
+if SA
+    isSA := true
+    alert("SA")
+    orderprice := high + high * difference //30000 * 0.1
+    stoploss := low - low * difference
+    bar_size := high - low
+    takeprofit := bar_size * tpsl
+    initialIndexOfBar := bar_index
+    openOrder := true
+    isOpenedOrderOnCurrentBar := false
+    
+if SOT
+    isSA := false
+    alert("SOT")
+    orderprice := low - low * difference
+    stoploss := high + high * difference
+    bar_size := high - low
+    takeprofit := bar_size * tpsl
+    initialIndexOfBar := bar_index
+    openOrder := true
+
+if bar_index - initialIndexOfBar >= bars
+    openOrder := false
+  
+if (liveTrading and barstate.isrealtime) or not liveTrading
+    if high >= orderprice and isSA and openOrder
+        openOrder := false
+        strategy.order("SA_long", true)
+        newOrderBar := bar_index
+        orderprice := na
+        
+    if low <= orderprice and not isSA and openOrder
+        openOrder := false
+        strategy.order("SOT_short", false)
+        newOrderBar := bar_index
+        orderprice := na
+    
+// plot(orderprice)
+
+plotshape(SA,style=shape.triangleup, color=color.green, size = size.auto, location=location.belowbar)
+plotchar(SA,text="SA",char="", color=color.green, location=location.belowbar)
+plotshape(SOT,style=shape.triangledown, color=color.red, size = size.auto, location=location.abovebar)
+plotchar(SOT,text="SOT",char="", color=color.red, location=location.abovebar)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
