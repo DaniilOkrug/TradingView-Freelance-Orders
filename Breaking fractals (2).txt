@@ -1,37 +1,82 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © icewalk
 
-//@version=4
-strategy("[Order]Breaking fractals", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=1, pyramiding = 99, calc_on_every_tick=false)
+// Описание стратегии. Не удалять. Описание необходимо для напоминания об алгоритме стратегии.
+// Стратегия включает 2 режима торговли: Обычный и Усредняющий.
+// Обычный режим использует фракталы страшего таймфрема(параметр) и текущего таймфрема для поиска точек входа.
+// Фракталы старшего таймфрема используются для определения тренда. Фракталы младшего для открытия ордеров. 
+// Оредра открываются на смене тренда или пробитии фракталов по тренду на текущем таймфрейме.
+// Усредняющий режим используется только при активном режиме ордеров - ЛОНГ(в стартегии будут открываться только лонг оредра)
+// Данный режим имеет 2 разных вида: пирамидинг 1 и пирамидинг больше одного.
+
+//@version=5
+strategy("[Order] Breaking fractals", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=1, pyramiding = 99, calc_on_every_tick=false, max_bars_back=500)
+
+//--Импортирование библиотке----------------------------------------------------
+
+//Загружаем библиотеку с фракталами
+import icewalk/Fractals/1
+
+//--Импортирование библиотек конец----------------------------------------------
 
 //---Ввод Данных----------------------------------------------------------------
+// /--Первая группа входных параметров--/
+GRP1 = "Фракталы"
+higherTimeframe = input.timeframe("D", title="Крупный таймфрейм ", group=GRP1)
+n_daily = input.int(2, title="Период для крупного фрактала", minval=2, group=GRP1)
+current_n = input.int(2, title="Период для текущего фрактала", minval=2, group=GRP1)
+showFractals = input.string("Никакие", title="Какие фрактала показать", options=["Текущий таймфрейм", "Крупный таймфрейм", "Никакие"], group=GRP1)
+stopLossType = "Дневной"
 
-higherTimeframe = input(title="Крупный таймфрейм ", defval="D", type=input.resolution, group="Фракталы")
-n_daily = input(title="Период для крупного фрактала", defval=2, minval=2, type=input.integer, group="Фракталы")
-current_n = input(title="Период для текущего фрактала", defval=2, minval=2, type=input.integer, group="Фракталы")
-showFractals = input(title="Какие фрактала показать", defval="Никакие", options=["Текущий таймфрейм", "Крупный таймфрейм", "Никакие"], group="Фракталы")
-stopLossType = input(title="Тип стоплосса", defval="Трейлинг", options=["Трейлинг", "Дневной", "ATR"], group="Стоп-лосс")
-nATRPeriod = input(5, title="ATR период", type=input.integer, group="Стоп-лосс")
-nATRMultip = input(3.5, title="ATR множитель", type=input.float, group="Стоп-лосс")
+// /--Вторая группа входных параметров--/
+GRP2 = "Настройка торговли"
+tradingMode_tooltipMessage = "Обычный - ордера открываются при пробитии фрактала и закрываются при смене тренда. Усреднение - если при смене тренда сделки находятся в убытке, то они остаются открытыми и усредняются по ходу такого же тренда. Работает только для режима ордеров ЛОНГ!"
+tradingMode = input.string("Обычный", title="Торговый режим", options=["Обычный", "Усреднение"], tooltip=tradingMode_tooltipMessage, group=GRP2)
 
-ordersAllowedSide = input("Обе", title="В какую сторону открывать сделки", options=["Обе", "лонг", "шорт"], group="Настройки ордеров")
-ordersOnTrend = input(false, title="Докупать по тренду", type=input.bool, group="Настройки ордеров")
-openZeroOrder = input(true, title="Открыть нулевой ордер", type=input.bool, group="Настройки ордеров")
-allowOrdersDistance = input(false, title="Использовать расстояние между ордерами", type=input.bool, group="Настройки ордеров")
-ordersDistance = input(5, title="Минимальное расстояние между ордерами(%)", type=input.float, step=0.1, group="Настройки ордеров")/100
+// /--Третья группа входных параметров--/
+GRP3 = "Режим Усреднение"
+pyramidingMode_tooltipMessage = "Один ордер - в тренде открывается один ордер и 1 усредняющий ордер на каждый слудующий тренд. Множественные ордера - в тренде открывается сетка ордеров и в слудеющих тренда усредняется на определенный объем."
+pyramidingMode = input.string("Один ордер", title="Режим пирмадинга", options=["Один ордер", "Множественные ордера"], group=GRP3)
+takeProfit_tooltipMessage = "Работает для обоих режимов пирамидинга. [Один ордер] При достижении TP сделки закрываются и ищется новый сигнал. Если 0, тогда сделки закрываются только на смене тренда при наличии прибыли. В ином случае, сделки продолжат усредняться. [Множественные ордера] При достижении TP, стоплосс переносится на 1% прибыли. Сделки закрываются на смене трнеда, если они имеют прибыль."
+takeProfit_percent = input.float(1, title="TP(%)", step=1, tooltip=takeProfit_tooltipMessage, group=GRP3) / 100
+orderSizeAveragingSizePercent = input.float(5, title="Объем усредняющей сделки(%)", tooltip="Для пирамидинга - Множественные ордера", group=GRP3) / 100
+noLoss_close = input.bool(false, title="Закрыть позиции в безубыток", group=GRP3)
+showTakeProfit = input.bool(false, title="Показать TP", group=GRP3)
+showStopLoss = input.bool(false, title="Показать SL", tooltip="SL для режима пирамидинга 'Множественные ордера'", group=GRP3)
 
-showFractalsLineForBreaking = input(title="Показать фракталы с пробоем", defval=true, type=input.bool, group="Визуальная часть")
-showTrend = input(title="Показать тренд", defval=true, type=input.bool, group="Визуальная часть")
-showStopLoss = input(title="Показать стоплосс", defval=true, type=input.bool, group="Визуальная часть")
-showStatistics = input(title="Показать статистику", defval=true, type=input.bool, group="Визуальная часть")
-showAveragePriceOfOpenOrders = input(title="Показать среднюю цену открытых позиций", defval=true, type=input.bool, group="Визуальная часть")
+
+// /--Четвертая группа входных параметров--/
+GRP4 = "Настройки ордеров"
+ordersAllowedSide = input.string("Обе", title="В какую сторону открывать сделки", options=["Обе", "Лонг", "Шорт"], group=GRP4)
+ordersOnTrend = input.bool(false, title="Докупать по тренду", group=GRP4)
+openZeroOrder = input.bool(true, title="Открыть нулевой ордер", group=GRP4)
+allowOrdersDistance = input.bool(false, title="Использовать расстояние между ордерами", group=GRP4)
+ordersDistance = input.float(5, title="Минимальное расстояние между ордерами(%)", step=0.1, group=GRP4) / 100
+
+// /--Пятая группа входных параметров--/
+GRP5 = "Визуальная часть"
+showFractalsLineForBreaking = input.bool(true, title="Показать фракталы с пробоем", group=GRP5)
+showTrend = input.bool(true, title="Показать тренд", group=GRP5)
+showStopLossTrend = input.bool(true, title="Показать стоплосс", group=GRP5)
+showStatistics = input.bool(true, title="Показать статистику", group=GRP5)
+showAveragePriceOfOpenOrders = input.bool(true, title="Показать среднюю цену открытых позиций", group=GRP5)
+showTrendLine = input.bool(false, title="Показать линию тренда", inline="Линия тренда", group=GRP5)
+showLineLabel = input.bool(false, title="Показать информацию о тренде", inline="Линия тренда", tooltip="Может быть активна только с параметром 'Показать линию тренда'", group=GRP5)
 
 //---Ввод Данных конец----------------------------------------------------------
+
+//---Проверка условии стратегии-------------------------------------------------
+
+//Если условия стратегии не совпадают с входными параметрами, то выводится ошибка
+if tradingMode == "Усреднение" and ordersAllowedSide != "Лонг"
+    runtime.error("Для режима торговли 'Усреднения' должен быть включен режим 'Лонг' ордеров. Активные параметры -> Торговый режим: Усреднение. В какую сторону открывать сделки: " + ordersAllowedSide)
+    
+//---Проверка условии стратегии конце-------------------------------------------
 
 //---Фракталы крупного таймфрейма-----------------------------------------------
 
 //Верх и низ свечи с другого таймфрейма
-[high_daily, low_daily] = security(syminfo.tickerid, higherTimeframe, [high, low], barmerge.gaps_on)
+[high_daily, low_daily] = request.security(syminfo.tickerid, higherTimeframe, [high, low], barmerge.gaps_on)
 
 // Врехний фрактал
 var high_dailyArr = array.new_float(2*n_daily+5)
@@ -59,8 +104,6 @@ if nz(high_daily) != 0
         upflagUpFrontier3_daily := upflagUpFrontier3_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+2) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+3) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 3) < array.get(high_dailyArr, n_daily))
         upflagUpFrontier4_daily := upflagUpFrontier4_daily and (array.get(high_dailyArr, n_daily+1) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+2) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+3) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+4) <= array.get(high_dailyArr, n_daily) and array.get(high_dailyArr, n_daily+i + 4) < array.get(high_dailyArr, n_daily))
     flagUpFrontier_daily := upflagUpFrontier0_daily or upflagUpFrontier1_daily or upflagUpFrontier2_daily or upflagUpFrontier3_daily or upflagUpFrontier4_daily
-
-    upFractal_daily := (upflagDownFrontier_daily and flagUpFrontier_daily)
     
 // Нижний фрактал
 bool downflagDownFrontier_daily = true
@@ -86,57 +129,21 @@ if nz(low_daily) != 0
         downflagUpFrontier4_daily := downflagUpFrontier4_daily and (array.get(low_dailyArr, n_daily+1) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+2) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+3) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+4) >= array.get(low_dailyArr, n_daily) and array.get(low_dailyArr, n_daily+i + 4) > array.get(low_dailyArr, n_daily))
     flagDownFrontier_daily := downflagUpFrontier0_daily or downflagUpFrontier1_daily or downflagUpFrontier2_daily or downflagUpFrontier3_daily or downflagUpFrontier4_daily
     
-    downFractal_daily := (downflagDownFrontier_daily and flagDownFrontier_daily)
-
+        
+upFractal_daily := higherTimeframe != timeframe.period ? (upflagDownFrontier_daily and flagUpFrontier_daily) : Fractals.getUpFractal(n_daily)
+downFractal_daily := higherTimeframe != timeframe.period? (downflagDownFrontier_daily and flagDownFrontier_daily) : Fractals.getDownFractal(n_daily)
 //---Фракталы крупного таймфрейма-----------------------------------------------
 
 //---Фракталы текущего таймфрейм------------------------------------------------
 
-// Верхний фрактал
-bool upflagDownFrontier = true
-bool upflagUpFrontier0 = true
-bool upflagUpFrontier1 = true
-bool upflagUpFrontier2 = true
-bool upflagUpFrontier3 = true
-bool upflagUpFrontier4 = true
+upFractal = Fractals.getUpFractal(current_n)
 
-for i = 1 to current_n
-    upflagDownFrontier := upflagDownFrontier and (high[current_n-i] < high[current_n])
-    upflagUpFrontier0 := upflagUpFrontier0 and (high[current_n+i] < high[current_n])
-    upflagUpFrontier1 := upflagUpFrontier1 and (high[current_n+1] <= high[current_n] and high[current_n+i + 1] < high[current_n])
-    upflagUpFrontier2 := upflagUpFrontier2 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+i + 2] < high[current_n])
-    upflagUpFrontier3 := upflagUpFrontier3 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+3] <= high[current_n] and high[current_n+i + 3] < high[current_n])
-    upflagUpFrontier4 := upflagUpFrontier4 and (high[current_n+1] <= high[current_n] and high[current_n+2] <= high[current_n] and high[current_n+3] <= high[current_n] and high[current_n+4] <= high[current_n] and high[current_n+i + 4] < high[current_n])
-flagUpFrontier = upflagUpFrontier0 or upflagUpFrontier1 or upflagUpFrontier2 or upflagUpFrontier3 or upflagUpFrontier4
-
-upFractal = (upflagDownFrontier and flagUpFrontier)
-
-// Нижний фрактал
-bool downflagDownFrontier = true
-bool downflagUpFrontier0 = true
-bool downflagUpFrontier1 = true
-bool downflagUpFrontier2 = true
-bool downflagUpFrontier3 = true
-bool downflagUpFrontier4 = true
-
-for i = 1 to current_n
-    downflagDownFrontier := downflagDownFrontier and (low[current_n-i] > low[current_n])
-    downflagUpFrontier0 := downflagUpFrontier0 and (low[current_n+i] > low[current_n])
-    downflagUpFrontier1 := downflagUpFrontier1 and (low[current_n+1] >= low[current_n] and low[current_n+i + 1] > low[current_n])
-    downflagUpFrontier2 := downflagUpFrontier2 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+i + 2] > low[current_n])
-    downflagUpFrontier3 := downflagUpFrontier3 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+3] >= low[current_n] and low[current_n+i + 3] > low[current_n])
-    downflagUpFrontier4 := downflagUpFrontier4 and (low[current_n+1] >= low[current_n] and low[current_n+2] >= low[current_n] and low[current_n+3] >= low[current_n] and low[current_n+4] >= low[current_n] and low[current_n+i + 4] > low[current_n])
-flagDownFrontier = downflagUpFrontier0 or downflagUpFrontier1 or downflagUpFrontier2 or downflagUpFrontier3 or downflagUpFrontier4
-
-downFractal = (downflagDownFrontier and flagDownFrontier)
+downFractal = Fractals.getDownFractal(current_n)
 
 //---Фракталы текущего таймфрейма конце---------------------------------------------------------------
 
 //---Основной алгорит---------------------------------------------------------------
 
-var ordersSize = array.new_float(0)
-
-//Определяем цена фракталов
 var float upFractal_highDaily = na      //Цена верхнего фрактала для крупного таймфрейма
 var float downFractal_lowDaily = na     //Цена ниженго фрактала для крупного таймфрейма
 var float upFractal_high = na           //Цена верхнего фрактала для текущего таймфрейма
@@ -144,33 +151,45 @@ var float downFractal_low = na          //Цена нижнего фрактал
 
 var float previousOrderPrice = na       //Цена предыдущего ордера
 
-var float stopLoss = na
+var float stopLoss_trend = na           //Стоплосс отвечает за смену тренда
+var float trendBegining_price = na      //Цена начала тренда
+
+var float stopLoss = na                 //Стоплосс ордеров -> для режима 'Усреднение'
+var float takeProfit = na               //Тейкпрофит -> для режима 'Усреднение'
 
 var int upFractalBarIndex = na          //Индекс бара для верхнего фрактала на крупном таймфрейме
 var int downFractalBarIndex = na        //Индекс бара для нижнего фрактала на крупном таймфрейме
+var int trendBegining_barIndex = na     //Индекс бара на котором начался тренд
+
+var int averagingCounter = 0            //Количество усреднений ордеров для режима 'Усреднение' с пирамидинг режимом 'Множественные ордера'
 
 var bool isTrendBullish = na            //Определяет тренд
+var bool isTrendChanged = na            //Определяет продолжение тренда
 var bool breakingHighBecame = na        //Определяет пробитие верхнего фрактала
 var bool breakingLowBecame = na         //Определяет пробитие нижнего фрактала
+
+var bool isContinue_LongPositions = na  //Определяет усреднеие лонг позиции -> для режима 'Усреднение'
 
 // for telegram
 var float trendBeginingPrice = na
 
-//Выход по стоплоссу
-if isTrendBullish
-    if close < stopLoss
-        strategy.close_all(comment="Close long orders", alert_message='"signal":"SELL", "side":"LONG", "zeroOrderPrice":' + tostring(trendBeginingPrice)) //Закрытие всех шортов
-        previousOrderPrice := na
+//Обновление тейкпрофита на каждой свече. strategy.opentrades и strategy.position_avg_price обновляются только на следющей свече, поэтому после открытия позиции, на следющих свечах необходимо просчитать TP.
+if isTrendBullish and strategy.opentrades > 0 and isContinue_LongPositions and not na(takeProfit)
+    takeProfit := strategy.position_avg_price + (strategy.position_avg_price * takeProfit_percent)
+
+//Обновление стоплосса, потому что по тренду открываются новые позиции и средняя цена меняется
+if isTrendBullish and strategy.opentrades > 0 and isContinue_LongPositions and not na(stopLoss)
+    stopLoss := strategy.position_avg_price + (strategy.position_avg_price * 0.01)
+
+//Выход по безубытку
+if noLoss_close and tradingMode == "Усреднение" and isContinue_LongPositions
+    if close >= strategy.position_avg_price and strategy.opentrades > 0
+        strategy.close_all(comment="[No loss] Close long orders", alert_message='"signal":"SELL", "side":"LONG"')
         
-        if not (stopLossType == "ATR")
-            stopLoss := na
-else
-    if close > stopLoss
-        strategy.close_all(comment="Close short orders", alert_message='"signal":"SELL", "side":"SHORT", "zeroOrderPrice":' + tostring(trendBeginingPrice)) //Закрытие всех лонгов
-        previousOrderPrice := na
-        
-        if not (stopLossType == "ATR")
-            stopLoss := na
+        takeProfit := na
+        stopLoss := na
+        isContinue_LongPositions := false
+        averagingCounter := 0
 
 //Определение дневных фракталов
 if upFractal_daily
@@ -183,7 +202,7 @@ if upFractal_daily
             break
     
     if not isTrendBullish
-        stopLoss := upFractal_highDaily
+        stopLoss_trend := upFractal_highDaily
         
 if downFractal_daily
     downFractal_lowDaily := array.get(low_dailyArr, n_daily)
@@ -193,27 +212,120 @@ if downFractal_daily
         if downFractal_lowDaily == low[i]
             downFractalBarIndex := bar_index[i] 
             break
-            
+    
     if isTrendBullish
-        stopLoss := downFractal_lowDaily
+        stopLoss_trend := downFractal_lowDaily
+
+//Выход по стоплоссу
+if isTrendBullish and tradingMode == "Усреднение" and not na(stopLoss)
+    if pyramidingMode == "Множественные ордера" and strategy.opentrades > 0 and close <= stopLoss
+        strategy.close_all(comment="[StopLoss] Close long orders", alert_message='"signal":"SELL", "side":"LONG"')
+        
+        isContinue_LongPositions := false
+        stopLoss := na
+        averagingCounter := 0
+
+//Выход по текйпрофиту
+if isTrendBullish and tradingMode == "Усреднение" and not na(takeProfit)
+    if pyramidingMode == "Один ордер" and close >= takeProfit
+        strategy.close_all(comment="[TakeProfit] Close long orders", alert_message='"signal":"SELL", "side":"LONG"')
+        takeProfit := na
+        
+        isContinue_LongPositions := false
+    
+    if pyramidingMode == "Множественные ордера" and close >= takeProfit
+        takeProfit := na
+        
+        //Переносим стоплосс на 1% прибыли при достижении тейкпрофита
+        stopLoss := strategy.position_avg_price + (strategy.position_avg_price * 0.01)
 
 //Определение тренда на дневном графике
 var float pendingOrderPrice = na //Цена отложенного ордера
 
 //Пробой верхнего фрактала на крупном графике
-if(close > upFractal_highDaily and not isTrendBullish)
-    array.clear(ordersSize)
+//Смена тренда на бычий
+if close > stopLoss_trend and not isTrendBullish
+    if tradingMode == "Усреднение"
+        if isContinue_LongPositions
+            if pyramidingMode == "Один ордер" and strategy.opentrades > 0
+                orderMessage = '"signal":"BUY", "side":"LONG"'
+                strategy.entry("[Averaging] Long", strategy.long, alert_message=orderMessage)
+                
+                takeProfit := strategy.position_avg_price + (close * takeProfit_percent)
+                
+                previousOrderPrice := close
+            
+            if pyramidingMode == "Множественные ордера" and strategy.opentrades > 0
+                //Первое усреднение
+                if averagingCounter == 0
+                    orderMessage = '"signal":"BUY", "side":"LONG"'
+                    strategy.entry("[Averaging] Long", strategy.long, strategy.position_size, alert_message=orderMessage)
+                    
+                    takeProfit := strategy.position_avg_price + (close * takeProfit_percent)
+                    
+                    previousOrderPrice := close
+                    
+                    averagingCounter += 1
+                    
+                //Повторные устреднения
+                if averagingCounter > 0
+                    orderMessage = '"signal":"BUY", "side":"LONG"'
+                    
+                    averagingOrderSize = strategy.position_size * orderSizeAveragingSizePercent
+                    strategy.entry("[Averaging] Long", strategy.long, averagingOrderSize, alert_message=orderMessage)
+                    
+                    takeProfit := strategy.position_avg_price + (strategy.position_avg_price * takeProfit_percent)
+                    
+                    previousOrderPrice := close
+                    
+                    averagingCounter += 1
+                    
+    
+    if tradingMode == "Обычный"
+        if strategy.opentrades > 0
+            strategy.close_all(comment="[Trend changing] Close short orders", alert_message='"signal":"SELL", "side":"SHORT"') //Закрытие всех шортов
+            previousOrderPrice := na
+        
+    stopLoss_trend := downFractal_lowDaily
+    
+    trendBeginingPrice := close
     isTrendBullish := true //Бычий тренд
+    isTrendChanged := true
     breakingHighBecame := true 
     breakingLowBecame := false
-    pendingOrderPrice := na
+    
+    pendingOrderPrice := na //Сбрасываем цену отложенной заявки
 
 //Пробой нижнего фрактала на крупном графике
-if(close < downFractal_lowDaily and isTrendBullish)
-    array.clear(ordersSize)
-    isTrendBullish := false //Тренд медвежий
+//Смена тренда на медвежий
+if close < stopLoss_trend and isTrendBullish
+    if tradingMode == "Усреднение"
+        if strategy.opentrades > 0 and strategy.openprofit < 0
+            isContinue_LongPositions := true
+        
+        if strategy.opentrades > 0 and strategy.openprofit > 0
+            strategy.close_all(comment="[Trend changing] Close long", alert_message='"signal":"SELL", "side":"LONG"')
+            
+            isContinue_LongPositions := false
+            averagingCounter := 0
+        
+        takeProfit := na
+        stopLoss := na
+
+    if tradingMode == "Обычный"
+        if strategy.opentrades > 0
+            strategy.close_all(comment="[Trend changing] Close long orders", alert_message='"signal":"SELL", "side":"LONG"') //Закрытие всех лонгов
+            previousOrderPrice := na
+    
+    trendBeginingPrice := close
+    
+    stopLoss_trend := upFractal_highDaily
+    
+    isTrendBullish := false //Тренд медвежийW
+    isTrendChanged := true
     breakingHighBecame := false
     breakingLowBecame := true
+    
     pendingOrderPrice := na
 
 if isTrendBullish //Если тренд бычий
@@ -221,18 +333,14 @@ if isTrendBullish //Если тренд бычий
     if upFractal
         pendingOrderPrice := high[current_n]
     
-    //Определяем стоплосс для бычего рынка
-    if downFractal and stopLossType == "Трейлинг"
-        stopLoss := low[current_n]
-    
     //Открытие лонга
-    if close > pendingOrderPrice and not na(pendingOrderPrice)
+    if close > pendingOrderPrice and not na(pendingOrderPrice) and barstate.isconfirmed
         pendingOrderPrice := na
         string orderMessage = na
         if strategy.opentrades == 0
-            orderMessage := '"signal":"BUY", "side":"LONG", "state":"FIRST"'
+            orderMessage := '"signal":"BUY", "side":"LONG"'
         else
-            orderMessage := '"signal":"BUY", "side":"LONG", "state":"ADDITIONAL"'
+            orderMessage := '"signal":"BUY", "side":"LONG"'
         
         longCondition = true
         if not na(previousOrderPrice)
@@ -242,28 +350,24 @@ if isTrendBullish //Если тренд бычий
             previuosOrderPriceRange_top = previousOrderPrice * (1 + ordersDistance)
             longCondition := longCondition and close > previuosOrderPriceRange_top
         
-        if longCondition and ordersAllowedSide != "шорт"
-            strategy.entry("long", strategy.long, alert_message=orderMessage + ',"zeroOrderPrice":' + tostring(trendBeginingPrice))
+        tradingMode_condiiton = (tradingMode == "Усреднение" and pyramidingMode == "Один ордер" and strategy.opentrades == 0) or (tradingMode == "Усреднение" and pyramidingMode == "Множественные ордера") or tradingMode == "Обычный"
+        if longCondition and ordersAllowedSide != "Шорт" and tradingMode_condiiton
+            strategy.entry("long", strategy.long, alert_message=orderMessage)
             previousOrderPrice := close
-        
-        array.push(ordersSize, strategy.position_size)
+
 else //Если медвежий тренд
     //При появлении нового нижнего фрактала на текущем таймфрейме обновляем цену отложенного ордера
     if downFractal
         pendingOrderPrice := low[current_n]
-        
-    //Определяем сотоплосс для медвежего рынка
-    if upFractal and stopLossType == "Трейлинг"
-        stopLoss := high[current_n]
     
     //Открытие шорта
-    if close < pendingOrderPrice and not na(pendingOrderPrice)
+    if close < pendingOrderPrice and not na(pendingOrderPrice) and barstate.isconfirmed and not isContinue_LongPositions
         pendingOrderPrice := na
         string orderMessage = na
         if strategy.opentrades == 0
-            orderMessage := '"signal":"BUY", "side":"SHORT", "state":"FIRST"'
+            orderMessage := '"signal":"BUY", "side":"SHORT"'
         else
-            orderMessage := '"signal":"BUY", "side":"SHORT", "state":"ADDITIONAL"'
+            orderMessage := '"signal":"BUY", "side":"SHORT"'
         
         shortCondition = true
         if not na(previousOrderPrice)
@@ -273,21 +377,20 @@ else //Если медвежий тренд
             previuosOrderPriceRange_bottom = previousOrderPrice * (1 - ordersDistance)
             shortCondition := shortCondition and close < previuosOrderPriceRange_bottom
         
-        if shortCondition and ordersAllowedSide != "лонг"
-            strategy.entry("short", strategy.short, alert_message=orderMessage + ',"zeroOrderPrice":' + tostring(trendBeginingPrice))
+        if shortCondition and ordersAllowedSide != "Лонг"
+            strategy.entry("short", strategy.short, alert_message=orderMessage)
             previousOrderPrice := close
-        
-        array.push(ordersSize, strategy.position_size)
 
-bool pos = na
-if stopLossType == "ATR"
-    xATR = atr(nATRPeriod)
-    nLoss = nATRMultip * xATR
-
-    stopLoss := iff(close > nz(stopLoss[1], 0) and close[1] > nz(stopLoss[1], 0), max(nz(stopLoss[1]), close - nLoss), iff(close < nz(stopLoss[1], 0) and close[1] < nz(stopLoss[1], 0), min(nz(stopLoss[1]), close + nLoss), iff(close > nz(stopLoss[1], 0), close - nLoss, close + nLoss)))
-
-    pos :=	iff(close[1] < nz(stopLoss[1], 0) and close > nz(stopLoss[1], 0), 1, iff(close[1] > nz(stopLoss[1], 0) and close < nz(stopLoss[1], 0), -1, nz(pos[1], 0)))
-// plot(stopLoss)
+//Открытие нулевого ордера
+if isTrendChanged and (not isContinue_LongPositions or strategy.opentrades == 0)
+    if isTrendBullish
+        if openZeroOrder and ordersAllowedSide != "Шорт"
+            zeroOrderMessage = '"signal":"BUY", "side":"LONG"'
+            strategy.entry("longZero", strategy.long, alert_message=zeroOrderMessage)
+    else
+        if openZeroOrder and ordersAllowedSide != "Лонг"
+            zeroOrderMessage = '"signal":"BUY", "side":"SHORT"'
+            strategy.entry("shortZero", strategy.short, alert_message=zeroOrderMessage)
 //---Основной алгоритм конец----------------------------------------------------
 
 //---Рисуем фракталы------------------------------------------------------------
@@ -297,73 +400,97 @@ bool showCurrentDownFractal = na
 bool showDailyUpFractal = na
 bool showDailyDownFractal = na
 
+var int dailyUpFractal_barIndex = na
+var int dailyDownFractal_barIndex = na
+
 //Определяем какие фракталы показывать
 if showFractals == "Крупный таймфрейм"
-    showDailyUpFractal := upFractal_daily
-    showDailyDownFractal := downFractal_daily
-else if showFractals == "Текущий таймфрейм"
+    if upFractal_daily
+        showDailyUpFractal := true
+        
+        for i = 1 to 100000
+            if upFractal_highDaily == high[i]
+                dailyUpFractal_barIndex := bar_index[i] - bar_index
+                break
+
+    if downFractal_daily
+        showDailyDownFractal := true
+        
+        for i = 1 to 100000
+            if downFractal_lowDaily == low[i]
+                dailyDownFractal_barIndex := bar_index[i] - bar_index
+                break
+
+if showFractals == "Текущий таймфрейм"
     showCurrentUpFractal := upFractal
     showCurrentDownFractal := downFractal
-    
+
+
 //Показываем фракталы
 plotshape(showCurrentDownFractal, title="Нижний фрактал текущего таймфрейма",style=shape.cross, location=location.belowbar, offset=-current_n, color=#F44336, size = size.small)
 plotshape(showCurrentUpFractal, title="Верхний фрактал текущего таймфрейма", style=shape.cross,   location=location.abovebar, offset=-current_n, color=#009688, size = size.small)
  
-plotshape(showDailyUpFractal, title="Верхний фрактал высшего таймфрейма", style=shape.cross, location=location.abovebar, offset=-n_daily-10, color=#009688, size = size.small)
-plotshape(showDailyDownFractal, title="Нижний фрактал высшего таймфрейма", style=shape.cross, location=location.belowbar, offset=-n_daily-10, color=#F44336, size = size.small)
+plotshape(showDailyUpFractal, title="Верхний фрактал высшего таймфрейма", style=shape.cross, location=location.abovebar, offset=dailyUpFractal_barIndex, color=#009688, size = size.small)
+plotshape(showDailyDownFractal, title="Нижний фрактал высшего таймфрейма", style=shape.cross, location=location.belowbar, offset=dailyDownFractal_barIndex, color=#F44336, size = size.small)
 
 // /---Показывае линию пробой---
 
 var float fractalHigh_forShowing = na
 var float fractalLow_forShowing = na
+
 if showFractalsLineForBreaking
     if breakingHighBecame //Момент когда прозошла смена тренда на бычий
         breakingHighBecame := false
         line.new(x1=upFractalBarIndex, y1=upFractal_highDaily, x2=bar_index, y2=upFractal_highDaily, style=line.style_arrow_right)
-        if openZeroOrder and ordersAllowedSide != "шорт"
-            strategy.entry("longZero", strategy.long, alert_message='"signal":"BUY", "side":"LONG", "state":"ZERO"')
-            
-            trendBeginingPrice := close
         
     if breakingLowBecame //Момент когда прозошла смена тренда на медвежий
         breakingLowBecame := false
         line.new(x1=downFractalBarIndex, y1=downFractal_lowDaily, x2=bar_index, y2=downFractal_lowDaily, style=line.style_arrow_right)
-        if openZeroOrder and ordersAllowedSide !="лонг"
-            strategy.entry("shortZero", strategy.short, alert_message='"signal":"BUY", "side":"SHORT", "state":"ZERO"')
-            
-            trendBeginingPrice := close
     
 // /---Показываем линию пробоя конец---
 
 // /---Показываем тренд---
 
-var bool showBullishTrend = na
-var bool showBearishTrend = na
+var color colorTrend = na
 
 if showTrend
-    showBullishTrend := isTrendBullish
-    showBearishTrend := not isTrendBullish
-bgcolor(showBullishTrend ? color.new(color.green, 90) : na, title="Бычий тренд")
-bgcolor(showBearishTrend ? color.new(color.red, 90) : na, title="Медвежий тренд")
+    if isTrendBullish and not na(isTrendBullish)
+        colorTrend := color.new(color.green, 90)
+    if not isTrendBullish and not na(isTrendBullish)
+        colorTrend := color.new(color.red, 90)
+    if na(isTrendBullish)
+        colorTrend := color.new(color.gray, 90)
+
+bgcolor(colorTrend, title="Цвет тренда")
 
 // /---Показываем тренд конец---
 
 // /---Показываем стоплосс---
 
-var line stopLoss_upLine = na
-var line stopLoss_downLine = na
+var line stopLossTrend_line = na
+var line stopLoss_line = na
 
-line.delete(stopLoss_upLine)
-line.delete(stopLoss_downLine)
+line.delete(stopLossTrend_line)
+line.delete(stopLoss_line)
 
-if showStopLoss and strategy.opentrades > 0
-    stopLoss_downLine := line.new(x1=downFractalBarIndex, y1=stopLoss, x2=bar_index, y2=stopLoss, extend=extend.right, color=color.red, style=line.style_dashed)   
-    // if isTrendBullish
-    //     stopLoss_downLine := line.new(x1=downFractalBarIndex, y1=downFractal_lowDaily, x2=bar_index, y2=downFractal_lowDaily, extend=extend.right, color=color.red, style=line.style_dashed)   
-    // else if not isTrendBullish
-    //     stopLoss_upLine := line.new(x1=upFractalBarIndex, y1=upFractal_highDaily, x2=bar_index, y2=upFractal_highDaily, extend=extend.right, color=color.red, style=line.style_dashed)
-        
+if showStopLossTrend
+    stopLossTrend_line := line.new(x1=isTrendBullish ? downFractalBarIndex : upFractalBarIndex, y1=stopLoss_trend, extend=extend.right, x2=bar_index, y2=stopLoss_trend, color=color.red, style=line.style_dashed)   
+
+if showStopLoss and tradingMode == "Усреднение" and pyramidingMode == "Множественные ордера" and  strategy.opentrades > 0
+    stopLoss_line := line.new(x1=bar_index[1], y1=stopLoss, x2=bar_index, y2=stopLoss, extend=extend.both, color=color.purple, style=line.style_dashed) 
+
 // /---Показываем стоплосс---
+
+// /---Показываем тейкпрофит---
+
+var line takeProfit_line = na
+
+line.delete(takeProfit_line)
+
+if showTakeProfit and not na(takeProfit)
+    takeProfit_line := line.new(x1=bar_index[1], y1=takeProfit, x2=bar_index, y2=takeProfit, extend=extend.both, color=color.lime, style=line.style_dashed)
+
+// /---Показываем тейкпрофит---
 
 // /---Показываем среднюю цену открытых позиций---
 
@@ -377,6 +504,48 @@ if showAveragePriceOfOpenOrders
 
 // /---Показываем среднюю цену открытых позиций конец---
 
+// /---Показываем линию соединения начала и конца тренда---
+
+if isTrendChanged
+    isTrendChanged := false
+    
+    if showTrendLine
+        line.new(trendBegining_barIndex, trendBegining_price, bar_index, close, color=color.blue, style=line.style_dotted)
+        
+        if showLineLabel
+            labelPoisition_x = math.round((trendBegining_barIndex + bar_index) / 2)
+            labelPoisition_y = (trendBegining_price + close) / 2
+            
+            priceChangingPecent_inTrend = math.round((math.abs(trendBegining_price - close) / close) * 100, 2) //Процент изменения цены внутри тренда
+            barsNumber_inTrend = bar_index - trendBegining_barIndex
+            labelText = str.tostring(priceChangingPecent_inTrend) + "%, " + str.tostring(barsNumber_inTrend)
+            
+            //Определяем цену линии в ее середине
+            float middlePriceOfLine = na    //Цена линии в ее середине 
+            if close > trendBegining_price
+                middlePriceOfLine := close - math.abs(close - trendBegining_price) / 2
+            else
+                middlePriceOfLine := close + math.abs(close - trendBegining_price) / 2
+            
+            //Определяем стиль лейбла
+            //Если цена бара выше цены линии на баре, где стоит лейбл, то лейбл будет находится ниже линии.
+            //В противоположном случае лейбл находится выше. 
+            string labelStyle = na          //Стиль линии
+            
+            labelOffset = math.round(bar_index - labelPoisition_x)
+            if close[labelOffset] > middlePriceOfLine
+                labelStyle := label.style_label_up
+            else
+                labelStyle := label.style_label_down
+            
+            //Создаем лейбл
+            label.new(labelPoisition_x, labelPoisition_y, labelText, color=color.black, style=labelStyle, textcolor=color.white)
+            
+    trendBegining_barIndex := bar_index
+    trendBegining_price := close
+
+// /---Показываем линию соединения начала и конца тренда конец---
+
 // /---Показываем статистику по открытым ордерам---
 
 var table statistics = na
@@ -389,13 +558,13 @@ if showStatistics
     
     statistics := table.new(position.top_right, 2, 4)
     table.cell(statistics, 0, 0, "Кол-во открытых сделок: ")
-    table.cell(statistics, 1, 0, tostring(strategy.opentrades))
+    table.cell(statistics, 1, 0, str.tostring(strategy.opentrades))
     table.cell(statistics, 0, 1, "Доход от открытых сделок: ")
-    table.cell(statistics, 1, 1, tostring(round(income, 2)) + "% ")
+    table.cell(statistics, 1, 1, str.tostring(math.round(income, 2)) + "% ")
     table.cell(statistics, 0, 2, "Объем открытых сделок: ")
-    table.cell(statistics, 1, 2, tostring(round(strategy.position_size, 2)) + syminfo.basecurrency)
+    table.cell(statistics, 1, 2, str.tostring(math.round(strategy.position_size, 2)) + syminfo.basecurrency)
     table.cell(statistics, 0, 3, "Средняя цена открытых ордеров: ")
-    table.cell(statistics, 1, 3, tostring(round(strategy.position_avg_price, 4)) + syminfo.currency)
+    table.cell(statistics, 1, 3, str.tostring(math.round(strategy.position_avg_price, 4)) + syminfo.currency)
 
 // /---Показываем статистику конец---
 

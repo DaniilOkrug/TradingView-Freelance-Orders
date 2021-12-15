@@ -1,0 +1,17 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=5
+indicator("[Order] White bar", overlay=false)
+
+rsi = ta.rsi(close, 14)
+
+changeOfTheCandle_percent = math.abs(close - open) / close * 100
+SMAEMA_Cond = close > ta.sma(close, 50) and close > ta.sma(close, 50)
+rsiCond = 30 <= rsi and rsi <= 40
+additional1Cond = close[1] > close[2] or (close[1] < open[1] and ((close[1] - open[1])/open[1])*100 > -1.1)
+additional2Cond = (((close - ta.sma(close, 100)) / close) * 100 > 2.1) or (close > ta.sma(close, 20) or close > ta.ema(close, 20))
+
+whiteCond = changeOfTheCandle_percent > 1 and close > open and rsiCond and SMAEMA_Cond and additional1Cond and additional2Cond
+
+plot(whiteCond ? 1 : 0, style=plot.style_columns, color=color.white, linewidth=2)

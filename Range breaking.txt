@@ -1,0 +1,164 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=4
+strategy("Range breaking", overlay=true, pyramiding=100, initial_capital=1000000000, default_qty_type=strategy.percent_of_equity, default_qty_value=0.1)
+
+//---INPUT---
+
+leftLenH = input(title="Pivot High", type=input.integer, defval=10, minval=1, inline="Pivot High")
+rightLenH = input(title="/", type=input.integer, defval=10, minval=1, inline="Pivot High")
+colorH = input(title="", defval=#E3EFFD, inline="Pivot High")
+
+leftLenL = input(title="Pivot Low", type=input.integer, defval=10, minval=1, inline="Pivot Low")
+rightLenL = input(title="/", type=input.integer, defval=10, minval=1, inline="Pivot Low")
+colorL = input(title="", defval=#E3EFFD, inline="Pivot Low")
+
+numberOfPivots = input(2, title="Number of pivots for level", type=input.integer)
+priceDifferencePercent = input(1, title="Difference between pivots(%)", type=input.float) / 100
+// level_rangePercent = input(60, title="Distance between level and price(%)(Alert 1)", type=input.float) / 100
+// vwap_rangePercent = input(120, title="Distance between VWAP aтd price(%)(Alert 2)", type=input.float) / 100
+// alerts = input(true, title="Alerts", type=input.bool)
+
+//---INPUT END---
+
+var mins = array.new_float(0)
+var maxs = array.new_float(0)
+var mins_indexes = array.new_int(0)
+var maxs_indexes = array.new_int(0)
+
+ph = pivothigh(leftLenH, rightLenH)
+pl = pivotlow(leftLenL, rightLenL)
+
+if not na(ph)
+    array.unshift(maxs, ph)
+    
+    if array.size(maxs) > numberOfPivots
+        array.pop(maxs)
+        array.pop(maxs_indexes)
+        
+    for i = 0 to leftLenH * 5
+        if ph == high[i]
+            array.unshift(maxs_indexes, bar_index[i])
+            break
+
+if not na(pl)
+    array.unshift(mins, pl)
+    
+    if array.size(mins) > numberOfPivots
+        array.pop(mins)
+        array.pop(mins_indexes)
+    
+    for i = 0 to leftLenH * 5
+        if pl == low[i]
+            array.unshift(mins_indexes, bar_index[i])
+            break
+
+drawLabel(_offset, _pivot, _style, _yloc, _color) =>
+    if not na(_pivot)
+        label.new(bar_index[_offset], _pivot, tostring(_pivot, format.mintick), style=_style, yloc=_yloc, color=_color, textcolor=#131722)
+
+drawLabel(rightLenH, ph, label.style_label_down, yloc.abovebar, colorH)
+drawLabel(rightLenL, pl, label.style_label_up, yloc.belowbar, colorL)
+
+float minRangeLow = na
+float minRangeHigh =  na
+float maxRangeLow = na
+float maxRangeHigh =  na
+
+var float priceForBreaking_high = na
+var float priceForBreaking_low = na
+
+var line lineHigh = na
+var line lineLow = na
+
+var int startingIndexLow = na
+var int startingIndexHigh = na
+
+showLowLine = true
+showHighLine = true
+
+//Bottom line
+if array.size(mins) == numberOfPivots
+    minRangeLow := (array.sum(mins) / numberOfPivots) * (1 - priceDifferencePercent)
+    minRangeHigh := (array.sum(mins) / numberOfPivots) * (1 + priceDifferencePercent)
+    
+    if not na(lineLow)
+        line.delete(lineLow)
+        lineLow := line.new(x1=startingIndexLow, y1=priceForBreaking_low, x2=bar_index, y2=priceForBreaking_low, color=color.red)
+    
+    for i = 1 to numberOfPivots - 1
+        if not (array.get(mins, i) > minRangeLow and array.get(mins, i) < minRangeHigh)
+            showLowLine := false    
+    
+    if showLowLine
+        line.delete(lineLow)
+        if array.get(mins, 0) != array.get(mins, 0)[1]
+            lineLow := line.new(x1=startingIndexLow, y1=priceForBreaking_low, x2=bar_index, y2=priceForBreaking_low, color=color.new(color.red, 70))
+        priceForBreaking_low := array.sum(mins) / numberOfPivots
+        startingIndexLow := array.get(mins_indexes, array.size(mins_indexes) - 1)
+        lineLow := line.new(x1=startingIndexLow, y1=priceForBreaking_low, x2=bar_index, y2=priceForBreaking_low, color=color.red)
+
+//Верхний уровень
+if array.size(maxs) == numberOfPivots
+    maxRangeLow := (array.sum(maxs) / numberOfPivots) * (1 - priceDifferencePercent)
+    maxRangeHigh := (array.sum(maxs) / numberOfPivots) * (1 + priceDifferencePercent)
+    
+    if not na(lineHigh)
+        line.delete(lineHigh)
+        lineHigh := line.new(x1=startingIndexHigh, y1=priceForBreaking_high, x2=bar_index, y2=priceForBreaking_high, color=color.green)
+    
+    for i = 1 to numberOfPivots - 1
+        if not (array.get(maxs, i) > maxRangeLow and array.get(maxs, i) < maxRangeHigh)
+            showHighLine := false  
+    
+    if showHighLine
+        line.set_color(lineHigh, color.new(color.green, 80))
+        line.delete(lineHigh)
+        if array.get(maxs, 0) != array.get(maxs, 0)[1]
+            lineHigh := line.new(x1=startingIndexHigh, y1=priceForBreaking_high, x2=bar_index, y2=priceForBreaking_high, color=color.new(color.green, 70))
+        priceForBreaking_high := array.sum(maxs) / numberOfPivots
+        startingIndexHigh := array.get(maxs_indexes, array.size(maxs_indexes) - 1)
+        lineHigh := line.new(x1=startingIndexHigh, y1=priceForBreaking_high, x2=bar_index, y2=priceForBreaking_high, color=color.green)
+
+float range = na
+float level60_up = na
+float level60_low = na
+var line level60Up_line = na
+var line level60Low_line = na
+var bool showBreakingUp = true
+var bool showBreakingDown = true
+
+line.delete(level60Up_line)
+line.delete(level60Low_line)
+
+//Пробитие верхнего уровня
+if close > priceForBreaking_high and priceForBreaking_high > priceForBreaking_low
+    range := priceForBreaking_high - priceForBreaking_low
+    // level60_low := na
+    // level60_up := priceForBreaking_high + range * level_rangePercent
+    
+    // level60Up_line := line.new(x1=bar_index-1, y1=level60_up, x2=bar_index, y2=level60_up, extend=extend.both, style=line.style_dashed)
+
+//Пробитие нижнего уровня
+if close < priceForBreaking_low and priceForBreaking_high > priceForBreaking_low
+    range := priceForBreaking_high - priceForBreaking_low
+    // level60_up := na
+    // level60_low := priceForBreaking_low - range * level_rangePercent
+    
+    // level60Low_line := line.new(x1=bar_index-1, y1=level60_low, x2=bar_index, y2=level60_low, extend=extend.both, style=line.style_dashed)
+
+breaking60up_signal = crossover(close, priceForBreaking_high)
+breaking60low_signal = crossunder(close, priceForBreaking_low)
+
+breakinkUpperLine = breaking60up_signal and not breaking60up_signal[1] and showBreakingUp
+breakingLowerLine = breaking60low_signal and not breaking60low_signal[1] and showBreakingDown
+
+plotshape(breakinkUpperLine, title="Breaking upper line", style=shape.triangleup, color=color.green, location=location.abovebar, size=size.small)
+plotshape(breakingLowerLine, title="Breaking lower line", style=shape.triangledown, color=color.red, location=location.belowbar, size=size.small)
+
+if breakinkUpperLine
+    strategy.entry("Long", strategy.long, alert_message="Пробой верхнего уровня")
+
+if breakingLowerLine
+    strategy.entry("Short", strategy.short, alert_message="Пробой нижнего уровня")

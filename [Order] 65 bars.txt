@@ -1,0 +1,19 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=5
+indicator("[Order] 65 bars")
+
+numberOfBars = input.int(65, title="Number of bars", step=1, minval=1)
+
+var prices = array.new_float()
+
+currentPrice = request.security("SPY", timeframe.period, close)
+array.push(prices, currentPrice)
+
+if array.size(prices) > 65
+    array.shift(prices)
+
+hi = array.max(prices)
+
+plot((math.abs(hi - currentPrice) / currentPrice) * 100)

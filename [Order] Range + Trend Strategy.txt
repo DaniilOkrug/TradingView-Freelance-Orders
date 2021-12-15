@@ -6,16 +6,28 @@ strategy("[Order] Range + Trend Strategy", shorttitle='RTI', overlay=true, defau
 src = input(defval=close, title="Source")
 samplingPeriod = input(defval=100, minval=1, title="Sampling Period")
 rangeMultiplier = input(defval=4.0, minval=0.1, title="Range Multiplier")
-takeProfitPercent = input(1.5, title='Take Profit %(0-100)', type=input.float, step=0.1) / 100
 
-leftbars = input(100, minval=1, title='Pivot Detection: Left Bars')
-rightbars = input(15, minval=1, title='Pivot Detection: Right Bars')
-showTrend = input(true, title='Show Trend Lines')
-showPivotsConnection = input(true, title='Show Pivot Connections')
+useTakeProfit = input(false, title="Use TakeProfit?", type=input.bool, group="TakeProfit")
+takeProfitPercent = input(1.5, title='TakeProfit %(0-100)', type=input.float, step=0.1, group="TakeProfit") / 100
+
+useStopLoss = input(false, title="Use StopLoss?", type=input.bool, group="StopLoss")
+stopLossType = input("Percent", title="StopLoss type", options=["Percent", "Trailing"], type=input.string, group="StopLoss")
+StopLossPercent = input(1.5, title="StopLoss %(0-100)", type=input.float, step=0.1, group="StopLoss") / 100
+
+leftbars = input(100, minval=1, title="Pivot Detection: Left Bars", group="Trend lines")
+rightbars = input(15, minval=1, title="Pivot Detection: Right Bars",  group="Trend lines")
+
+showTakeProfit = input(true, title="Show TakeProfit", group="Visual part")
+showStopLoss = input(true, title="Show StopLoss", group="Visual part")
+showTrend = input(true, title="Show Trend Lines", group="Visual part")
+showPivotsConnection = input(true, title="Show Pivot Connections", group="Visual part")
 
 //---Determine trend lines--------------------------------------------
 
 var float takeProfit = 0.0
+var float stopLoss = na
+var float stopLoss_priceAction = na
+
 var bool tookProfit = false
 
 pivotHigh = pivothigh(high, leftbars, rightbars)
@@ -103,18 +115,35 @@ shortCondition = shortCond and conds[1] == 1
 plotshape(longCondition, title = "Buy Signal", text ="L", textcolor = color.black, style=shape.triangleup, size = size.small, location=location.belowbar, color = color.green)
 plotshape(shortCondition, title = "Sell Signal", text ="S", textcolor = color.black, style=shape.triangledown, size = size.small, location=location.abovebar, color = color.red)
 
+filtplot = plot(filter, color=up > 0 ? color.green : down > 0 ? color.red : color.orange, linewidth=3, title="Range Filter")
+
 [supertrend, marketSide] = supertrend(20, 7) // [супертренд линия, напрвление рынка]
 
+takeProfitLongCondition = close > takeProfit and not tookProfit and longCond and takeProfitPercent != 0 and strategy.position_size > 0 and useTakeProfit
+takeProfitShortCondition = close < takeProfit and not tookProfit and shortCond and takeProfitPercent != 0 and strategy.position_size < 0 and useTakeProfit
+
+if takeProfitLongCondition or takeProfitShortCondition
+    tookProfit := true
+    takeProfit := na
+    strategy.close_all(comment="TakeProfit", alert_message="TAKEPROFIT")
+    
+stopLossLongCondition = close < stopLoss and strategy.position_size > 0 and useStopLoss
+stopLossShortCondition = close > stopLoss and strategy.position_size < 0 and useStopLoss
+
+if stopLossLongCondition or stopLossShortCondition
+    strategy.close_all(comment="StopLoss", alert_message="STOPLOSS")
+    stopLoss := na
+    stopLoss_priceAction := na
+
+// Open orders
 if longCondition and close > supertrend
     strategy.entry("LONG", strategy.long, alert_message="🟢 LONG")
     
 if shortCondition and close < supertrend
     strategy.entry("SHORT", strategy.short, alert_message="🔴 SHORT")
-filtplot = plot(filter, color=up > 0 ? color.green : down > 0 ? color.red : color.orange, linewidth=3, title="Range Filter")
 
-//---Determine signals------------------------------------------------
-
-if takeProfitPercent != 0
+// TakeProfit
+if useTakeProfit
     if longCondition
         tookProfit := false
         takeProfit := close + close * takeProfitPercent
@@ -122,13 +151,31 @@ if takeProfitPercent != 0
     if shortCondition
         tookProfit := false
         takeProfit := close - close * takeProfitPercent
+
+//StopLoss
+if useStopLoss
+    if longCondition
+        stopLoss := close - close * StopLossPercent
+        stopLoss_priceAction := close
         
-takeProfitLongCondition = close > takeProfit and not tookProfit and longCond and takeProfitPercent != 0
-takeProfitShortCondition = close < takeProfit and not tookProfit and shortCond and takeProfitPercent != 0
+    if shortCondition
+        stopLoss := close + close * StopLossPercent
+        stopLoss_priceAction := close
+    
+    if stopLossType == "Trailing"
+        if strategy.position_size > 0 and close > stopLoss_priceAction
+            stopLoss_priceAction := close
+            stopLoss := close - close * StopLossPercent
+            
+        if strategy.position_size < 0 and close < stopLoss_priceAction
+            stopLoss_priceAction := close
+            stopLoss := close + close * StopLossPercent
 
-if takeProfitLongCondition or takeProfitShortCondition
-    tookProfit := true
-    strategy.close_all(alert_message="TAKEPROFIT")
+// plot(stopLoss, color=color.white)
 
-plotshape(takeProfitLongCondition, title = "TakeLongProfit", style = shape.circle, size = size.small, location = location.abovebar, color = color.yellow)
-plotshape(takeProfitShortCondition, title = "TakeShortProfit", style = shape.circle, size = size.small, location = location.belowbar, color = color.yellow)
+//---Determine signals------------------------------------------------
+plotshape(takeProfitLongCondition and showTakeProfit, title = "TakeProfitLong", style = shape.circle, size = size.small, location = location.abovebar, color = color.yellow)
+plotshape(takeProfitShortCondition and showTakeProfit, title = "TakeProfitShort", style = shape.circle, size = size.small, location = location.belowbar, color = color.yellow)
+
+plotshape(stopLossLongCondition and showStopLoss, title="StopLossLong", style = shape.circle, size = size.small, location = location.abovebar, color = color.blue)
+plotshape(stopLossShortCondition and showStopLoss, title="StopLossShort", style = shape.circle, size = size.small, location = location.abovebar, color = color.blue)

@@ -1,0 +1,196 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=5
+strategy("[Order] 3xEMA 1min startegy", overlay=true, margin_long=100, margin_short=100)
+
+//--INPUT-----------------------------------------------------------------------
+
+n = input.int(title="Periods", defval=2, minval=2, group="Fractals")
+risk = input.float(title="Risk coefficient", defval=1.5, step=0.01, group="TakeProfit/StopLoss")
+
+showFractals = input.bool(title="Show fractals", defval=true, group="Visual part")
+
+//--INPUT END-------------------------------------------------------------------
+
+//--FRACTALS--------------------------------------------------------------------
+
+// UpFractal
+bool upflagDownFrontier = true
+bool upflagUpFrontier0 = true
+bool upflagUpFrontier1 = true
+bool upflagUpFrontier2 = true
+bool upflagUpFrontier3 = true
+bool upflagUpFrontier4 = true
+
+for i = 1 to n
+    upflagDownFrontier := upflagDownFrontier and (high[n-i] < high[n])
+    upflagUpFrontier0 := upflagUpFrontier0 and (high[n+i] < high[n])
+    upflagUpFrontier1 := upflagUpFrontier1 and (high[n+1] <= high[n] and high[n+i + 1] < high[n])
+    upflagUpFrontier2 := upflagUpFrontier2 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+i + 2] < high[n])
+    upflagUpFrontier3 := upflagUpFrontier3 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+3] <= high[n] and high[n+i + 3] < high[n])
+    upflagUpFrontier4 := upflagUpFrontier4 and (high[n+1] <= high[n] and high[n+2] <= high[n] and high[n+3] <= high[n] and high[n+4] <= high[n] and high[n+i + 4] < high[n])
+flagUpFrontier = upflagUpFrontier0 or upflagUpFrontier1 or upflagUpFrontier2 or upflagUpFrontier3 or upflagUpFrontier4
+
+upFractal = (upflagDownFrontier and flagUpFrontier)
+
+
+// downFractal
+bool downflagDownFrontier = true
+bool downflagUpFrontier0 = true
+bool downflagUpFrontier1 = true
+bool downflagUpFrontier2 = true
+bool downflagUpFrontier3 = true
+bool downflagUpFrontier4 = true
+
+for i = 1 to n
+    downflagDownFrontier := downflagDownFrontier and (low[n-i] > low[n])
+    downflagUpFrontier0 := downflagUpFrontier0 and (low[n+i] > low[n])
+    downflagUpFrontier1 := downflagUpFrontier1 and (low[n+1] >= low[n] and low[n+i + 1] > low[n])
+    downflagUpFrontier2 := downflagUpFrontier2 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+i + 2] > low[n])
+    downflagUpFrontier3 := downflagUpFrontier3 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+3] >= low[n] and low[n+i + 3] > low[n])
+    downflagUpFrontier4 := downflagUpFrontier4 and (low[n+1] >= low[n] and low[n+2] >= low[n] and low[n+3] >= low[n] and low[n+4] >= low[n] and low[n+i + 4] > low[n])
+flagDownFrontier = downflagUpFrontier0 or downflagUpFrontier1 or downflagUpFrontier2 or downflagUpFrontier3 or downflagUpFrontier4
+
+downFractal = (downflagDownFrontier and flagDownFrontier)
+
+//--FRACTALS END----------------------------------------------------------------
+
+//--MAIN ALGORITHM--------------------------------------------------------------
+
+var bool isLong = false                     //Determine bullish trend
+var bool isShort = false                    //Determine bearish trend
+
+var float stopLoss = na                     //SL
+var float takeProfit = na                   //TP
+var float openPrice = na                    //Position open price
+
+var bool waitOpenSignal_long = false        //Determine waiting the down fractal
+var bool waitOpenSignal_short = false       //Determine waiting the up fractal
+
+//EMAs
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema100 = ta.ema(close, 100)
+
+//Determine longs condition
+if not isLong and ema20 > ema50 and ema50 > ema100
+    isLong := true
+    isShort := false
+    
+    waitOpenSignal_short := false
+
+//Determine short condition
+if not isShort and  ema20 < ema50 and ema50 < ema100
+    isLong := false
+    isShort := true
+    
+    waitOpenSignal_long := false
+
+//Long Position
+if isLong and close > ema20 and close[n] > ema20[n] and not waitOpenSignal_long
+    waitOpenSignal_long := true
+    waitOpenSignal_short := false
+
+//Short position
+if isShort and close < ema20 and close[n] < ema20[n] and not waitOpenSignal_short
+    waitOpenSignal_long := false
+    waitOpenSignal_short := true
+
+//-Position closing by takeprofit or stoploss
+
+//TP close conditions
+takeProfitPositionClose_longCondition = strategy.position_size > 0 and close > takeProfit
+takeProfitPositionClose_shortCondition = strategy.position_size < 0 and close < takeProfit
+
+//Close position by TP
+if strategy.opentrades > 0 and ( takeProfitPositionClose_longCondition or takeProfitPositionClose_shortCondition )
+    stopLoss := na
+    takeProfit := na
+    openPrice := na
+    
+    strategy.close_all(comment="TakeProfit")
+
+//Sl close conditions
+stopLossPositionClose_longCondition = strategy.position_size > 0 and close < stopLoss
+stopLossPositionClose_shortCondition = strategy.position_size < 0 and close > stopLoss
+
+//Close position by SL
+if strategy.opentrades > 0 and ( stopLossPositionClose_longCondition or stopLossPositionClose_shortCondition )
+    stopLoss := na
+    takeProfit := na
+    openPrice := na
+    
+    strategy.close_all(comment="StopLoss")
+
+//-Open postions algorithm
+
+//Open Long
+//Fractal in range of ema20 and ema100
+fractalCondition_long = downFractal and ema20 > low[n] and low[n] > ema100
+
+//Condition for opening long
+longOpenPositionCondition = waitOpenSignal_long and fractalCondition_long and strategy.opentrades == 0
+    
+if longOpenPositionCondition
+    waitOpenSignal_long := false
+    
+    //Determine TP and SL for position
+    if low[n] > ema50[n]
+        stopLoss := ema50
+        takeProfit := close + (close - stopLoss) * risk
+    else
+        stopLoss := ema100
+        takeProfit := close + (close - stopLoss) * risk
+    
+    openPrice := close
+    strategy.entry("Long", strategy.long)
+
+//Open Short
+//Fractal in range of ema20 and ema100
+fractalCondition_short = upFractal and ema20 < high[n] and high[n] < ema100
+
+//Condition for opening short
+shortOpenPositionCondition = waitOpenSignal_short and fractalCondition_short and strategy.opentrades == 0
+    
+if shortOpenPositionCondition
+    waitOpenSignal_short := false
+    
+    //Determine TP and SL for position
+    if high[n] < ema50[n]
+        stopLoss := ema50
+        takeProfit := close - (stopLoss - close) * risk
+    else
+        stopLoss := ema100
+        takeProfit := close - (stopLoss - close) * risk
+    
+    openPrice := close
+    strategy.entry("Short", strategy.short)
+
+//--MAIN ALGORITHM END----------------------------------------------------------
+
+//--VISUALISATION---------------------------------------------------------------
+
+//Fractals
+plotshape(showFractals and downFractal, style=shape.triangledown, location=location.belowbar, offset=-n, color=color.red, size = size.small)
+plotshape(showFractals and upFractal, style=shape.triangleup,   location=location.abovebar, offset=-n, color=color.green, size = size.small)
+
+//EMAs plots
+plot(ema20, linewidth=2, color=color.maroon)
+plot(ema50, linewidth=2, color=color.orange)
+plot(ema100, linewidth=2, color=color.white)
+
+//Stoploss and Takeprofit
+var line tpLine = na        //TakeProfit line
+var line slLine = na        //StopLoss line
+var line openLine = na
+
+line.delete(tpLine)
+line.delete(slLine)
+line.delete(openLine)
+
+tpLine := line.new(bar_index[1], takeProfit, bar_index, takeProfit, extend=extend.both, style=line.style_dashed, color=color.green)
+slLine := line.new(bar_index[1], stopLoss, bar_index, stopLoss, extend=extend.both, style=line.style_dashed, color=color.red)
+openLine := line.new(bar_index[1], openPrice, bar_index, openPrice, extend=extend.both, style=line.style_dashed, color=color.blue)
+
+//--VISUALISATION END---------------------------------------------------------------

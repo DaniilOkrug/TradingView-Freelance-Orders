@@ -1,107 +1,205 @@
 
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © Mil_Cheese
-//@version=4
+// ©ic3walk
+//@version=5
 
-// Даниил, два параметра 1.Торговля только в живую 2. Открывается только одна сделка. Можно ли по умолчанию прописать про тики?
+// Описание стратегии. Желательно, не удалять. Описание необходимо для напоминания о том, что делает скрипт.
+// Стратегия ориентирована на потиковую торговлю.
+// Стратегия определяет сигнала SA(вход в лонг) и SOT(вход в шорт). 
+// В ней присутствует 2 режим. Стандартный - всегда открыта 1 сделка и может быть закрыта только при достижении стоп-лосса или тейк-профита.
+// Закрытие на противоположном сигнале - открыта 1 позиция и при появлении противоположного сигнала она зывкрывается и появляется новый ордер. Сигналы в том же направлении игнорируются.
+// После появления сигнала(SA/SOT) выставляется отложенный ордер на вход в сделку(чуть выше/ниже свечи).
+// Стоп-лосс выставляется чусть ниже/выше свечи.
+// Тейк-профит определяется колчиством рассоянии от цены входа в позцию(отложенный ордер) до стоплосса. Данное количесвто задается во входном параметре.
+// Если после сигнала проходит определенное количество баров(входной параметр) и ордер не открыт, то сигнал игнорируется.
 
-strategy("[Order] strgy_SS_SOT", overlay=true, margin_long=1, margin_short=1, pyramiding=1, calc_on_every_tick=true)
+strategy("[Order] strgy_SA_SOT", overlay=true, calc_on_every_tick=true, pyramiding=10)
 
-difference = input(0.001, title="difference", type = input.float) / 100
-tpsl = input(3, title="TP/SL", type = input.integer)
-bars = input(2, title="Bars", type = input.integer)
-liveTrading = input(true, title="Торговля в живую", type=input.bool)
+//--INPUT--
+
+difference = input.float(0.005, title="Разница", tooltip="Значение, которое используется при расчете SL и цены открытия позиции.")/100
+tp_count = input.int(3, title="TP", tooltip="Количество размеров расстаяние от цены открытия до стоплосса для TP.")
+bars = input(2, title="Количество баров", tooltip="Количество баров после которого сигнал перестает быть действительным.")
+
+tradingMode_tooltpMesssage = "Cтандартный - только одна позиция может быть открытой. Следующая позиция может быть открыта только после закрытия текущей. Закрытие на противоположном сигнале - при появлении проивоположного сигнала, старая закрывается."
+tradingMode = input.string("Cтандартный", title="Торговый режим", options=["Cтандартный", "Закрытие на противоположном сигнале"], tooltip=tradingMode_tooltpMesssage)
+
+liveTrading = input.bool(true, title="Живая торговля", tooltip="Сигналы на истории игнорируются")
+
+showSL_TP = input.bool(false, title="Показать SL и TP", group="Визуальная часть")
+
+//--INPUT END--
 
 part = (high - low) / 3
 _sa_part1 = high - part
 _sot_part3 = low + part
 
-SA = close >= close [1] and crossover(close, _sa_part1) and  open > _sa_part1
+//Условие SA сигнала
+SA = close >= close [1] and ta.crossover(close, _sa_part1) and  open > _sa_part1
 
+//Усливие SOT сигнала
+SOT = close <= close[1] and ta.crossunder(close, _sot_part3) and open < _sot_part3
+
+//Задание цвета сигнальному бару
 barcolor (SA ? color.green : na)
-SOT = close <= close[1] and crossunder(close, _sot_part3) and open < _sot_part3
-
 barcolor(SOT ? color.red : na)
 
-var float orderprice = na
-var float takeprofit = na
-var float stoploss = na
-var float bar_size = na
+//Основные переменные
+varip float openPrice = na                  //Entry price
+varip float takeProfit = na                 //TP price of the current opened position
+varip float stopLoss = na                   //SL price of the current opened position
+varip float takeProfit_tmp = na             //TP of the signal position
+varip float stopLoss_tmp = na               //SL of the signal position
 
-var int initialIndexOfBar = na
-var int newOrderBar = bar_index
+varip int initialIndexOfBar = na            //Bar index of the signal position
 
-var bool isSA = na
-var bool openOrder = na
-var bool isOpenedOrderOnCurrentBar = false
+var bool isSA = na                          //Determine type of the signla SA/SOT
 
-if strategy.position_size > 0 and crossover(close, takeprofit)
-    strategy.close_all()
-if strategy.position_size < 0 and crossunder(close, takeprofit)
-    strategy.close_all()
-// Это для лосей
-if strategy.position_size < 0 and crossover(close, stoploss)
-    strategy.close_all()
-if strategy.position_size > 0 and crossunder(close, stoploss)
-    strategy.close_all()
+//Closing orders by TP or SL
+//Закрытие ордеров по тейк-профиту
+// if strategy.position_size > 0 and close > takeProfit
+//     strategy.close_all(comment="TakeProfit")
     
-if SA
-    isSA := true
+// if strategy.position_size < 0 and close < takeProfit
+//     strategy.close_all(comment="TakeProfit")
+
+// //Закрытие ордеров по стоп-лоссу
+// if strategy.position_size < 0 and close > stopLoss
+//     strategy.close_all(comment="StopLoss")
+    
+// if strategy.position_size > 0 and close < stopLoss
+    // strategy.close_all(comment="StopLoss")
+if strategy.position_size > 0
+    strategy.exit("Close long", "Long", limit=takeProfit, stop=stopLoss)
+else if strategy.position_size < 0
+    strategy.exit("Close short", "Short", limit=takeProfit, stop=stopLoss)
+
+if strategy.opentrades == 0
+    takeProfit := na
+    stopLoss := na
+    
+//Определение сигналов
+//SA сигнал
+if SA and barstate.isconfirmed
     alert("SA")
-    orderprice := high + high * difference //30000 * 0.1
-    stoploss := low - low * difference
-    bar_size := high - low
-    takeprofit := bar_size * tpsl
-    initialIndexOfBar := bar_index
-    openOrder := true
-    isOpenedOrderOnCurrentBar := false
-    
-if SOT
-    isSA := false
-    alert("SOT")
-    orderprice := low - low * difference
-    stoploss := high + high * difference
-    bar_size := high - low
-    takeprofit := bar_size * tpsl
-    initialIndexOfBar := bar_index
-    openOrder := true
 
-if bar_index - initialIndexOfBar >= bars
-    openOrder := false
-  
-if (liveTrading and barstate.isrealtime) or not liveTrading
-    if high >= orderprice and isSA and openOrder
-        openOrder := false
-        strategy.order("SA_long", true)
-        newOrderBar := bar_index
-        orderprice := na
+    // При 2 режиме торговли приходит противоположный сигнал, то мы закрываем ордер
+    if tradingMode == "Закрытие на противоположном сигнале" and strategy.position_size < 0
+        strategy.entry("Long", strategy.long)
         
-    if low <= orderprice and not isSA and openOrder
-        openOrder := false
-        strategy.order("SOT_short", false)
-        newOrderBar := bar_index
-        orderprice := na
+        openPrice := high + high * difference
+        stopLoss := low - low * difference
+        takeProfit := openPrice + math.abs(openPrice - stopLoss) * tp_count
+        
+        openPrice := na
     
-// plot(orderprice)
+    if strategy.opentrades == 0
+        isSA := true
+    
+        openPrice := high + high * difference //Определяем цену открытия ордера для сигнала
+    
+        stopLoss_tmp := low - low * difference
+        takeProfit_tmp := openPrice + math.abs(openPrice - stopLoss_tmp) * tp_count
+        
+        initialIndexOfBar := bar_index
 
-plotshape(SA,style=shape.triangleup, color=color.green, size = size.auto, location=location.belowbar)
-plotchar(SA,text="SA",char="", color=color.green, location=location.belowbar)
-plotshape(SOT,style=shape.triangledown, color=color.red, size = size.auto, location=location.abovebar)
-plotchar(SOT,text="SOT",char="", color=color.red, location=location.abovebar)
+//SOT сигнал
+if SOT and barstate.isconfirmed
+    alert("SOT")
+    
+    // При 2 режиме торговли приходит противоположный сигнал, то мы закрываем ордер
+    if tradingMode == "Закрытие на противоположном сигнале" and strategy.position_size > 0
+        strategy.entry("Short", strategy.short)
+        
+        openPrice := low - low * difference
+        stopLoss := high + high * difference
+        takeProfit := openPrice - math.abs(stopLoss - openPrice) * tp_count
+        openPrice := na
+    
+    if strategy.opentrades == 0
+        isSA := false
+        openPrice := low - low * difference //Определяем цену открытия ордера для сигнала
+        
+        stopLoss_tmp := high + high * difference
+        takeProfit_tmp := openPrice - math.abs(stopLoss_tmp - openPrice) * tp_count
+        
+        initialIndexOfBar := bar_index
+        
 
+//Подсчет количество баров после сигнала
+if bar_index - initialIndexOfBar >= bars
+    openPrice := na
+  
+//Открытие ордеров
+if (liveTrading and barstate.isrealtime) or not liveTrading
+    //Услвовия откртия позиций
+    openLong_condition = close >= openPrice and isSA and not na(openPrice)
+    openShort_condition = close <= openPrice and not isSA and not na(openPrice)
+    
+    //Определяем торговый режим
+    if tradingMode == "Cтандартный"
+        if openLong_condition and strategy.opentrades == 0
+            strategy.entry("Long", strategy.long)
+            
+            stopLoss := stopLoss_tmp
+            takeProfit := takeProfit_tmp
+            
+            openPrice := na
+            stopLoss_tmp := na
+            takeProfit_tmp := na
+    
+        if openShort_condition and strategy.opentrades == 0
+            strategy.entry("Short", strategy.short)
+            
+            stopLoss := stopLoss_tmp
+            takeProfit := takeProfit_tmp
+            
+            openPrice := na
+            stopLoss_tmp := na
+            takeProfit_tmp := na
 
+    else //"Закрытие на противоположном сигнале" mode
+        if openLong_condition
+            if strategy.opentrades == 0
+                strategy.entry("Long", strategy.long)
+                
+                stopLoss := stopLoss_tmp
+                takeProfit := takeProfit_tmp
+                initialIndexOfBar := bar_index
+            else if strategy.position_size < 0
+                strategy.entry("Long", strategy.long)
+                
+                stopLoss := stopLoss_tmp
+                takeProfit := takeProfit_tmp
+                initialIndexOfBar := bar_index
+            
+            openPrice := na
+            stopLoss_tmp := na
+            takeProfit_tmp := na
+        
+        if openShort_condition
+            if strategy.opentrades == 0
+                strategy.entry("Short", strategy.short)
+                
+                stopLoss := stopLoss_tmp
+                takeProfit := takeProfit_tmp
+                initialIndexOfBar := bar_index
+            else if strategy.position_size > 0
+                strategy.entry("Short", strategy.short)
+                
+                stopLoss := stopLoss_tmp
+                takeProfit := takeProfit_tmp
+                initialIndexOfBar := bar_index
+            
+            openPrice := na
+            stopLoss_tmp := na
+            takeProfit_tmp := na
 
+//--VISUAL PART--//
+plot(showSL_TP ? stopLoss : na, color=color.red)
+plot(showSL_TP ? takeProfit : na, color=color.green)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+plotshape(SA and barstate.isconfirmed, style=shape.triangleup, color=color.green, size = size.auto, location=location.belowbar)
+plotchar(SA and barstate.isconfirmed, text="SA",char="", color=color.green, location=location.belowbar)
+plotshape(SOT and barstate.isconfirmed, style=shape.triangledown, color=color.red, size = size.auto, location=location.abovebar)
+plotchar(SOT and barstate.isconfirmed, text="SOT",char="", color=color.red, location=location.abovebar)

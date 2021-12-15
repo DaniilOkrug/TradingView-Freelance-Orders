@@ -1,0 +1,163 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © icewalk
+
+//@version=5
+indicator("[Order] Level search", overlay=true, max_bars_back=500)
+
+barsCount = input.int(100, "Bars")
+CoincidenceCount = input.int(5, "Количество совпадений")
+deviation = input.int(1, "Deviation")
+showRupture = input.bool(true)
+
+deviationCurrent = (deviation + 0.1) * syminfo.mintick
+
+levels = array.new_float()
+count = array.new_int()
+barIndexes = array.new_int()
+
+var lines = array.new_line()
+
+//Deleta lines
+for l in lines
+    line.delete(l)
+
+array.clear(lines)
+
+//Lows
+for i = 1 to barsCount
+    levelsNumber = array.size(levels)
+    if levelsNumber == 0
+        array.push(levels, low[i])
+        array.push(count, 1)
+        array.push(barIndexes, bar_index[i])
+        continue
+    
+    if levelsNumber == 1
+        if array.get(levels, 0) - low[i] < deviationCurrent
+            if array.get(count, 0) < CoincidenceCount
+                array.set(levels, 0, ((array.get(levels, 0) * array.get(count, 0)) + low[i]) / (array.get(count, 0) + 1))
+                array.set(count, 0, array.get(count, 0) + 1)
+                array.set(barIndexes, 0, bar_index[i])
+        else
+            array.push(levels, low[i])
+            array.push(count, 1)
+            array.push(barIndexes, bar_index[i])
+        continue
+    
+    found = false
+    for j = levelsNumber - 1 to 0
+        if math.abs(array.get(levels, j) - low[i]) < deviationCurrent
+            found := true
+            if array.get(count, j) < CoincidenceCount
+                array.set(levels, j, ((array.get(levels, j) * array.get(count, j)) + low[i]) / (array.get(count, j) + 1))
+                array.set(count, j, array.get(count, j) + 1)
+                array.set(barIndexes, j, bar_index[i])
+    
+    if not found
+        array.push(levels, low[i])
+        array.push(count, 1)
+        array.push(barIndexes, bar_index[i])
+        
+    
+for i = array.size(levels) - 1 to 0
+    if array.get(count, i) < CoincidenceCount
+        array.remove(levels, i)
+        array.remove(count, i)
+        array.remove(barIndexes, i)
+        continue
+    
+    if array.get(count, i) >= CoincidenceCount
+        if not showRupture
+            for j = bar_index - array.get(barIndexes, i) to 0
+                if (low[j] + deviationCurrent - array.get(levels, i)) *  (high[j] - deviationCurrent - array.get(levels, i)) < 0
+                    array.remove(levels, i)
+                    array.remove(count, i)
+                    array.remove(barIndexes, i)
+                    break
+            
+    
+if barstate.islast
+    //Lows
+    if array.size(levels) > 1
+        for i = array.size(levels) - 1 to 0
+            if array.get(count, i) >= CoincidenceCount
+                level = array.get(levels, i)
+                index = bar_index - array.get(barIndexes, i)
+                new_line = line.new(bar_index[index], level, bar_index, level, style=line.style_dashed, color=color.blue)
+                array.push(lines, new_line)
+    else
+        if array.size(levels) == 1
+            level = array.get(levels, 0)
+            index = bar_index - array.get(barIndexes, 0)
+            new_line = line.new(bar_index[index], level, bar_index, level, style=line.style_dashed, color=color.blue)
+            array.push(lines, new_line)
+
+array.clear(levels)
+array.clear(count)
+array.clear(barIndexes)
+// //Highs
+for i = 1 to barsCount
+    if array.size(levels) == 0
+        array.push(levels, high[i])
+        array.push(count, 1)
+        array.push(barIndexes, bar_index[i])
+        continue
+    
+    if array.size(levels) == 1
+        if array.get(levels, 0) - high[i] < deviationCurrent
+            if array.get(count, 0) < CoincidenceCount
+                array.set(levels, 0, ((array.get(levels, 0) * array.get(count, 0)) + high[i]) / (array.get(count, 0) + 1))
+                array.set(count, 0, array.get(count, 0) + 1)
+                array.set(barIndexes, 0, bar_index[i])
+        else
+            array.push(levels, high[i])
+            array.push(count, 1)
+            array.push(barIndexes, bar_index[i])
+        continue
+    
+    found = false
+    for j = array.size(levels) - 1 to 0
+        if math.abs(array.get(levels, j) - high[i]) < deviationCurrent
+            found := true
+            if array.get(count, j) < CoincidenceCount
+                array.set(levels, j, ((array.get(levels, j) * array.get(count, j)) + high[i]) / (array.get(count, j) + 1))
+                array.set(count, j, array.get(count, j) + 1)
+                array.set(barIndexes, j, bar_index[i])
+    
+    if not found
+        array.push(levels, high[i])
+        array.push(count, 1)
+        array.push(barIndexes, bar_index[i])
+        
+
+for i = array.size(levels) - 1 to 0
+    if array.get(count, i) < CoincidenceCount
+        array.remove(levels, i)
+        array.remove(count, i)
+        array.remove(barIndexes, i)
+        continue
+    
+    if array.get(count, i) >= CoincidenceCount
+        if not showRupture
+            for j = bar_index - array.get(barIndexes, i) to 0
+                if (low[j] + deviationCurrent - array.get(levels, i)) *  (high[j] - deviationCurrent - array.get(levels, i)) < 0
+                    array.remove(levels, i)
+                    array.remove(count, i)
+                    array.remove(barIndexes, i)
+                    break
+
+if barstate.islast
+    //Highs
+    if array.size(levels) > 1
+        for i = array.size(levels) - 1 to 0
+            if array.get(count, i) >= CoincidenceCount
+                level = array.get(levels, i)
+                index = bar_index - array.get(barIndexes, i)
+                new_line = line.new(bar_index[index], level, bar_index, level, style=line.style_dashed, color=color.red)
+                array.push(lines, new_line)
+    else
+        if array.size(levels) == 1
+            level = array.get(levels, 0)
+            index = bar_index - array.get(barIndexes, 0)
+            new_line = line.new(bar_index[index], level, bar_index, level, style=line.style_dashed, color=color.red)
+            array.push(lines, new_line)
